@@ -8,6 +8,7 @@ const SESSIONS_KEY = "zakerty_sessions_v1";
 const STORIES_KEY = "zakerty_stories_v1";
 const VOICE_SETTING_KEY = "zakerty_auto_voice_v1";
 const ACCESSIBILITY_KEY = "zakerty_accessibility_v1";
+const REMINDER_MEMORY_KEY = "zakerty_reminder_memory_v1";
 const DB_NAME = "ZakertyPhotos";
 const DB_VERSION = 3;
 const PHOTO_STORE = "photos";
@@ -16,8 +17,315 @@ const STORY_AUDIO_STORE = "story-audio";
 const MAX_AUDIO_SIZE = 12 * 1024 * 1024;
 const MAX_RECORDING_MS = 30_000;
 const REMINDER_API = "/api";
+const ACCESSIBILITY_DEFAULTS = {
+  language: "ar",
+  theme: "light",
+  highContrast: false,
+  comfortMode: false,
+  reduceMotion: false,
+  fontSize: 16,
+  lineSpacing: 1.7,
+  letterSpacing: 0,
+  speechRate: 0.9,
+  instructionRepeats: 1
+};
 
 const $ = (selector) => document.querySelector(selector);
+const textSources = new WeakMap();
+const translatedText = new WeakMap();
+const attributeSources = new WeakMap();
+let translationObserver = null;
+let currentTranslationLanguage = null;
+
+const translationRows = [
+  ["ذاكرتي | Zakerty", "Zakerty | Family Memories", "Zakerty | Souvenirs de famille"],
+  ["ذ", "Z", "Z"],
+  ["العودة للرئيسية", "Back to home", "Retour à l’accueil"],
+  ["@aria-label:العودة للرئيسية", "@aria-label:Back to home", "@aria-label:Retour à l’accueil"],
+  ["@aria-label:القائمة الرئيسية", "@aria-label:Main menu", "@aria-label:Menu principal"],
+  ["ذاكرتي", "Zakerty", "Zakerty"],
+  ["Zakerty · ألبوم العيلة", "Zakerty · Family album", "Zakerty · Album familial"],
+  ["بيانات محلية على الجهاز", "Data stays on this device", "Données conservées sur cet appareil"],
+  ["البيانات محفوظة على هذا الجهاز", "Data saved on this device", "Données enregistrées sur cet appareil"],
+  ["🎙️ تكلّم مع ذاكرتي", "🎙️ Talk to Zakerty", "🎙️ Parler à Zakerty"],
+  ["اضغط الزر وقل أمرًا. الميكروفون لا يعمل قبل الضغط؛ ذاكرتي لا تحفظ الصوت، وقد يعالجه المتصفح.", "Press the button and say a command. The microphone stays off until you press it. Zakerty does not save your voice; your browser may process it.", "Appuyez sur le bouton et dites une commande. Le micro reste désactivé jusque-là. Zakerty n’enregistre pas votre voix, mais votre navigateur peut la traiter."],
+  ["ذكريات العيلة في مكان واحد", "Family memories in one place", "Les souvenirs de famille réunis"],
+  ["كل وش مألوف، وكل حكاية ليها مكان ❤️", "A familiar face for every story ❤️", "Un visage familier, une place pour chaque histoire ❤️"],
+  ["مساحة عائلية للصور والحكايات، وأنشطة تذكّر هادئة يمكن مشاركتها مع شخص مألوف وبالوتيرة المناسبة للمريض.", "A family space for photos, stories, and calm memory activities to share with someone familiar, at the person's pace.", "Un espace familial pour les photos, les récits et des activités de mémoire paisibles, à partager avec un proche au rythme de la personne."],
+  ["أفراد العيلة", "Family members", "Membres de la famille"],
+  ["الجلسات المسجلة", "Recorded sessions", "Séances enregistrées"],
+  ["ابدأ جلسة ذكريات", "Start a memory session", "Commencer une séance de souvenirs"],
+  ["إدارة أفراد العيلة", "Manage family", "Gérer la famille"],
+  ["المناسبات العائلية القادمة 🎂", "Upcoming family occasions 🎂", "Prochains événements familiaux 🎂"],
+  ["لحظة هادئة كل أسبوع", "A calm moment each week", "Un moment paisible chaque semaine"],
+  ["ذكرى الأسبوع 🌿", "Memory of the week 🌿", "Souvenir de la semaine 🌿"],
+  ["افتحوا الذكرى", "Open the memory", "Ouvrir le souvenir"],
+  ["أضيفوا حكاية عائلية، وارجعوا لها معًا وقت ما تحبوا.", "Add a family story and revisit it together whenever you like.", "Ajoutez un récit familial et retrouvez-le ensemble quand vous le souhaitez."],
+  ["أضيفوا أول حكاية", "Add your first story", "Ajouter votre premier récit"],
+  ["القائمة الرئيسية", "Main menu", "Menu principal"],
+  ["الرئيسية", "Home", "Accueil"],
+  ["حكايات العيلة", "Family stories", "Récits de famille"],
+  ["أنشطة التذكّر", "Memory activities", "Activités de mémoire"],
+  ["البحث والنتائج", "Research and results", "Recherche et résultats"],
+  ["الخصوصية", "Privacy and settings", "Confidentialité et réglages"],
+  ["أفراد العيلة 👨‍👩‍👧", "Family members 👨‍👩‍👧", "Membres de la famille 👨‍👩‍👧"],
+  ["ضيفوا الصور الحقيقية والمعلومات الخاصة بكل شخص.", "Add real photos and personal information for each family member.", "Ajoutez des photos et des informations personnelles pour chaque membre."],
+  ["+ إضافة شخص", "+ Add a person", "+ Ajouter une personne"],
+  ["ابحث عن فرد", "Search family", "Rechercher un proche"],
+  ["@placeholder:الاسم أو صلة القرابة", "@placeholder:Name or relationship", "@placeholder:Nom ou lien de parenté"],
+  ["ترتيب حسب", "Sort by", "Trier par"],
+  ["الاسم", "Name", "Nom"],
+  ["صلة القرابة", "Relationship", "Lien de parenté"],
+  ["العمر من الأكبر", "Age, oldest first", "Âge, du plus âgé au plus jeune"],
+  ["أقرب مناسبة", "Next occasion", "Prochain événement"],
+  ["@aria-label:طريقة عرض العيلة", "@aria-label:Family display options", "@aria-label:Mode d’affichage de la famille"],
+  ["عرض الأفراد", "People view", "Vue des personnes"],
+  ["شجرة العيلة", "Family tree", "Arbre généalogique"],
+  ["@aria-label:شجرة العيلة", "@aria-label:Family tree", "@aria-label:Arbre généalogique"],
+  ["لسه مفيش أفراد مضافين. ابدأ بإضافة أول شخص.", "No family members yet. Add the first person to get started.", "Aucun membre pour le moment. Ajoutez la première personne."],
+  ["مفيش أفراد مطابقين للبحث.", "No matching family members.", "Aucun membre ne correspond à la recherche."],
+  ["حكايات العيلة 📖", "Family stories 📖", "Récits de famille 📖"],
+  ["اجمعوا الحكايات والصور والأصوات في خط زمني عائلي. أضيفوا ذكرى بموافقة أصحابها.", "Bring stories, photos, and recordings together in a family timeline. Add memories with the storyteller’s consent.", "Réunissez récits, photos et enregistrements dans une chronologie familiale. Ajoutez un souvenir avec l’accord de la personne concernée."],
+  ["أضيفوا حكاية جديدة", "Add a new story", "Ajouter un récit"],
+  ["عنوان الحكاية", "Story title", "Titre du récit"],
+  ["@placeholder:مثلاً: أول يوم في المدرسة", "@placeholder:For example: First day of school", "@placeholder:Par exemple : premier jour d’école"],
+  ["الشخص المرتبط بالحكاية", "Person in this story", "Personne liée au récit"],
+  ["تاريخ أو سنة الحكاية (اختياري)", "Story date or year (optional)", "Date ou année du récit (facultatif)"],
+  ["احكوا لنا عنها", "Tell us about it", "Racontez-nous ce souvenir"],
+  ["@placeholder:اكتبوا الذكرى كما تحبوا أن تفتكروها...", "@placeholder:Write the memory the way you want to remember it...", "@placeholder:Écrivez le souvenir comme vous souhaitez vous en rappeler…"],
+  ["🎙️ إملاء الحكاية بالصوت", "🎙️ Dictate the story", "🎙️ Dicter le récit"],
+  ["التسجيل الصوتي يبدأ فقط عند الضغط على الزر.", "Voice input starts only when you press the button.", "La saisie vocale commence uniquement après avoir appuyé sur le bouton."],
+  ["تسجيل الحكاية (اختياري)", "Story recording (optional)", "Enregistrement du récit (facultatif)"],
+  ["🎙️ سجّلوا الحكاية", "🎙️ Record the story", "🎙️ Enregistrer le récit"],
+  ["إيقاف التسجيل", "Stop recording", "Arrêter l’enregistrement"],
+  ["ارفعوا ملفًا صوتيًا أو سجّلوا ذكرى قصيرة حتى 30 ثانية. التسجيل محفوظ على هذا الجهاز.", "Upload an audio file or record a short memory (up to 30 seconds). It stays on this device.", "Importez un fichier audio ou enregistrez un bref souvenir (30 secondes max.). Il reste sur cet appareil."],
+  ["حفظ الحكاية", "Save story", "Enregistrer le récit"],
+  ["لسه مفيش حكايات محفوظة. ابدأوا بأول ذكرى عائلية.", "No stories saved yet. Add your first family memory.", "Aucun récit enregistré. Ajoutez votre premier souvenir familial."],
+  ["لسه مفيش جلسات محفوظة.", "No sessions have been saved yet.", "Aucune séance n’a encore été enregistrée."],
+  ["أنشطة التذكّر 🧠", "Memory activities 🧠", "Activités de mémoire 🧠"],
+  ["اختاروا نشاطًا مناسبًا. جلسة الذكريات هادئة، من غير توقيت أو إجابات صح وغلط، وممكن تنهوها في أي وقت.", "Choose an activity that feels right. Memory sessions are calm, untimed, have no right or wrong answers, and can end at any time.", "Choisissez une activité adaptée. Les séances sont paisibles, sans minuterie ni bonne ou mauvaise réponse, et peuvent s’arrêter à tout moment."],
+  ["Smart Recall — استدعاء متدرّج", "Smart Recall — gradual recall", "Smart Recall — rappel progressif"],
+  ["مراجعة صور وحكايات بتلميحات اختيارية ومواعيد مرنة، بلا درجات أو إجابات خطأ", "Review photos and stories with optional cues and flexible timing—no scores or wrong answers.", "Revoir photos et récits avec des indices facultatifs et un rythme souple, sans score ni mauvaise réponse."],
+  ["جلسة ذكريات هادئة", "Calm memory session", "Séance de souvenirs paisible"],
+  ["استرجعوا الصور والحكايات معًا، خطوة بخطوة ومن غير اختبار", "Explore photos and stories together, step by step, without a test.", "Revivez photos et récits ensemble, pas à pas, sans test."],
+  ["أنشطة التعرّف والبحث", "Recognition and research activities", "Activités de reconnaissance et de recherche"],
+  ["اعرض أفراد العيلة وصلات القرابة التي أضفتموها", "View family members and the relationships you added", "Voir les membres de la famille et les liens ajoutés"],
+  ["مستوى صعوبة الأسئلة", "Question difficulty", "Difficulté des questions"],
+  ["سهل — اختياران", "Easy — 2 choices", "Facile — 2 choix"],
+  ["متوسط — 3 اختيارات", "Medium — 3 choices", "Moyen — 3 choix"],
+  ["تحدي — حتى 4 اختيارات", "Challenge — up to 4 choices", "Défi — jusqu’à 4 choix"],
+  ["اقرأ الأسئلة بصوت تلقائيًا", "Read questions aloud automatically", "Lire automatiquement les questions à voix haute"],
+  ["مين ده؟", "Who is this?", "Qui est-ce ?"],
+  ["اختار الاسم المناسب للصورة", "Choose the name that matches the photo", "Choisissez le nom correspondant à la photo"],
+  ["فاكر الحكاية؟", "Remember the story?", "Vous souvenez-vous du récit ?"],
+  ["اربط التلميح بالشخص المناسب", "Match the clue to the person", "Associez l’indice à la bonne personne"],
+  ["مين بيتكلم؟", "Who is speaking?", "Qui parle ?"],
+  ["ترتيب العيلة", "Family order", "Ordre familial"],
+  ["اسمع التسجيل واختار الشخص المناسب", "Listen to the recording and choose the person", "Écoutez l’enregistrement et choisissez la personne"],
+  ["مختبر التجارب 📊", "Research dashboard 📊", "Tableau de recherche 📊"],
+  ["رمز المشارك", "Participant code", "Code participant"],
+  ["استخدم رمزًا مستعارًا بدل الاسم الحقيقي.", "Use a pseudonym instead of a real name.", "Utilisez un pseudonyme plutôt qu’un vrai nom."],
+  ["وقت الجلسة", "Session time", "Moment de la séance"],
+  ["الصباح", "Morning", "Matin"],
+  ["بعد الظهر", "Afternoon", "Après-midi"],
+  ["المساء", "Evening", "Soir"],
+  ["الجلسات", "Sessions", "Séances"],
+  ["متوسط الدقة", "Average accuracy", "Précision moyenne"],
+  ["متوسط زمن الإجابة", "Average response time", "Temps de réponse moyen"],
+  ["دقة الإجابات في آخر الجلسات", "Answer accuracy in recent sessions", "Précision des réponses lors des dernières séances"],
+  ["هتظهر النتائج هنا بعد حفظ أول جلسة", "Results will appear here after the first session is saved.", "Les résultats apparaîtront ici après l’enregistrement de la première séance."],
+  ["@aria-label:رسم بياني لدقة الإجابات في الجلسات المسجلة", "@aria-label:Chart of answer accuracy in recorded sessions", "@aria-label:Graphique de la précision des réponses aux séances enregistrées"],
+  ["تصدير النتائج CSV", "Export results as CSV", "Exporter les résultats au format CSV"],
+  ["تصدير نسخة مشفّرة بالصور والصوت", "Export encrypted backup with photos and audio", "Exporter une sauvegarde chiffrée avec photos et audio"],
+  ["سجل الجلسات", "Session history", "Historique des séances"],
+  ["الخصوصية والإعدادات 🔒", "Privacy and settings 🔒", "Confidentialité et réglages 🔒"],
+  ["بياناتك تفضل على جهازك", "Your data stays on your device", "Vos données restent sur votre appareil"],
+  ["التذكيرات النشطة 🔔", "Active reminders 🔔", "Rappels actifs 🔔"],
+  ["تفعيل جدول التذكير", "Enable reminder schedule", "Activer la programmation des rappels"],
+  ["وقت التذكير", "Reminder time", "Heure du rappel"],
+  ["محتوى التذكير", "Reminder content", "Contenu du rappel"],
+  ["رسالة ترحيبية", "A friendly greeting", "Un message de bienvenue"],
+  ["صور العيلة", "Family photos", "Photos de famille"],
+  ["حكاية عائلية", "A family story", "Un récit familial"],
+  ["ذكرى بصورة أو صوت", "Memory with a photo or audio", "Souvenir avec photo ou audio"],
+  ["لعبة تذكّر", "Memory activity", "Activité de mémoire"],
+  ["الذكرى المرتبطة بالتذكير", "Memory linked to the reminder", "Souvenir associé au rappel"],
+  ["أيام التذكير", "Reminder days", "Jours de rappel"],
+  ["الأحد", "Sunday", "Dimanche"],
+  ["الإثنين", "Monday", "Lundi"],
+  ["الثلاثاء", "Tuesday", "Mardi"],
+  ["الأربعاء", "Wednesday", "Mercredi"],
+  ["الخميس", "Thursday", "Jeudi"],
+  ["الجمعة", "Friday", "Vendredi"],
+  ["السبت", "Saturday", "Samedi"],
+  ["السماح بالإشعارات", "Allow notifications", "Autoriser les notifications"],
+  ["ربط هذا الجهاز", "Connect this device", "Associer cet appareil"],
+  ["حفظ جدول التذكير", "Save reminder schedule", "Enregistrer les rappels"],
+  ["إرسال إشعار تجريبي", "Send a test notification", "Envoyer une notification test"],
+  ["إيقاف التذكيرات", "Stop reminders", "Désactiver les rappels"],
+  ["فصل هذا الجهاز", "Disconnect this device", "Dissocier cet appareil"],
+  ["سهولة القراءة", "Reading accessibility", "Confort de lecture"],
+  ["لغة الموقع", "Website language", "Langue du site"],
+  ["اختاروا لغة الواجهة", "Choose the interface language", "Choisissez la langue de l’interface"],
+  ["راحة القراءة والمظهر", "Reading comfort and appearance", "Confort de lecture et apparence"],
+  ["سرعة وتكرار الصوت يطبّقان على التعليمات المقروءة؛ يمكن الاستماع إلى الحكايات والتسجيلات يدويًا.", "Speech speed and repetition apply to spoken instructions. Stories and recordings can still be played manually.", "La vitesse et la répétition s’appliquent aux consignes vocales. Les récits et enregistrements restent disponibles en lecture manuelle."],
+  ["اختاروا المظهر والمسافات وحجم النص المريح. تُحفظ التفضيلات على هذا الجهاز.", "Choose a comfortable theme, spacing, and text size. Preferences are saved on this device.", "Choisissez un thème, un espacement et une taille de texte confortables. Vos préférences sont enregistrées sur cet appareil."],
+  ["المظهر", "Theme", "Thème"],
+  ["فاتح", "Light", "Clair"],
+  ["داكن", "Dark", "Sombre"],
+  ["تباين عالٍ", "High contrast", "Contraste élevé"],
+  ["وضع الراحة بألوان دافئة", "Warm comfort mode", "Mode confort aux couleurs chaudes"],
+  ["تقليل الحركة والانتقالات", "Reduce motion and transitions", "Réduire les animations et transitions"],
+  ["حجم النص", "Text size", "Taille du texte"],
+  ["@aria-label:تصغير حجم النص", "@aria-label:Decrease text size", "@aria-label:Réduire la taille du texte"],
+  ["حجم النص الافتراضي", "Default text size", "Taille de texte par défaut"],
+  ["@aria-label:تكبير حجم النص", "@aria-label:Increase text size", "@aria-label:Augmenter la taille du texte"],
+  ["المسافة بين السطور", "Line spacing", "Espacement des lignes"],
+  ["المسافة بين الحروف", "Letter spacing", "Espacement des lettres"],
+  ["إعدادات الصوت والتعليمات", "Audio and instruction settings", "Réglages audio et consignes"],
+  ["سرعة القراءة الصوتية", "Speech rate", "Vitesse de lecture audio"],
+  ["تكرار التعليمات", "Instruction repetition", "Répétition des consignes"],
+  ["مرة واحدة", "Once", "Une fois"],
+  ["مرتين", "Twice", "Deux fois"],
+  ["ثلاث مرات", "Three times", "Trois fois"],
+  ["تشفير النسخة الاحتياطية", "Encrypt backup", "Chiffrer la sauvegarde"],
+  ["النسخ الاحتياطي", "Backups", "Sauvegardes"],
+  ["تصدير نسخة احتياطية مشفّرة", "Export encrypted backup", "Exporter une sauvegarde chiffrée"],
+  ["استعادة نسخة احتياطية", "Restore backup", "Restaurer une sauvegarde"],
+  ["حذف البيانات", "Delete data", "Supprimer les données"],
+  ["حذف كل البيانات المحلية", "Delete all local data", "Supprimer toutes les données locales"],
+  ["كلمة المرور", "Password", "Mot de passe"],
+  ["تأكيد كلمة المرور", "Confirm password", "Confirmer le mot de passe"],
+  ["تشفير وتنزيل", "Encrypt and download", "Chiffrer et télécharger"],
+  ["إلغاء", "Cancel", "Annuler"],
+  ["إضافة فرد من العيلة", "Add a family member", "Ajouter un membre de la famille"],
+  ["صورة الشخص", "Person’s photo", "Photo de la personne"],
+  ["صوت الشخص (اختياري)", "Person’s voice (optional)", "Voix de la personne (facultatif)"],
+  ["🎙️ تسجيل صوت", "🎙️ Record voice", "🎙️ Enregistrer la voix"],
+  ["حذف الصوت المحفوظ", "Delete saved audio", "Supprimer l’audio enregistré"],
+  ["@placeholder:مثلاً: جدتي", "@placeholder:For example: my grandmother", "@placeholder:Par exemple : ma grand-mère"],
+  ["العربية", "Arabic", "Arabe"],
+  ["@placeholder:مثلاً: أول يوم في المدرسة", "@placeholder:For example: first day of school", "@placeholder:Par exemple : premier jour d’école"],
+  ["@aria-label:إغلاق النافذة", "@aria-label:Close dialog", "@aria-label:Fermer la fenêtre"],
+  ["@placeholder:P-001", "@placeholder:P-001", "@placeholder:P-001"],
+  ["@aria-label:تصغير حجم النص", "@aria-label:Decrease text size", "@aria-label:Réduire la taille du texte"],
+  ["@aria-label:تكبير حجم النص", "@aria-label:Increase text size", "@aria-label:Augmenter la taille du texte"],
+  ["الوالد أو الوالدة في شجرة العيلة (اختياري)", "Parent in the family tree (optional)", "Parent dans l’arbre généalogique (facultatif)"],
+  ["العمر بالسنوات (اختياري)", "Age in years (optional)", "Âge en années (facultatif)"],
+  ["تاريخ عيد الميلاد (اختياري)", "Birthday (optional)", "Date d’anniversaire (facultatif)"],
+  ["التلميح الشخصي", "Personal clue", "Indice personnel"],
+  ["@placeholder:مثلاً: بتحب تحكي لنا عن رحلات زمان", "@placeholder:For example: enjoys telling us about old trips", "@placeholder:Par exemple : aime raconter ses anciens voyages"],
+  ["أكلة مفضلة (اختياري)", "Favorite food (optional)", "Plat préféré (facultatif)"],
+  ["أغنية مفضلة (اختياري)", "Favorite song (optional)", "Chanson préférée (facultatif)"],
+  ["مكان مميز (اختياري)", "Special place (optional)", "Lieu important (facultatif)"],
+  ["حفظ الشخص", "Save person", "Enregistrer la personne"],
+  ["تنبيه بحثي:", "Research notice:", "Avis de recherche :"],
+  ["ضعيف", "Low", "Faible"],
+  ["مألوف", "Familiar", "Familier"],
+  ["ملف الشخص الشخصي", "Person profile", "Profil de la personne"],
+  ["اعرضوا الذكرى", "Show the memory", "Afficher le souvenir"],
+  ["التالي", "Next", "Suivant"],
+  ["إنهاء الجلسة", "End session", "Terminer la séance"],
+  ["🔊 اسمع السؤال", "🔊 Listen to the question", "🔊 Écouter la question"],
+  ["اسمع الاسم", "Listen to the name", "Écouter le nom"],
+  ["تخطي السؤال", "Skip question", "Passer la question"],
+  ["السؤال التالي", "Next question", "Question suivante"],
+  ["ابدأ المراجعة", "Start review", "Commencer la révision"],
+  ["ابدأ جلسة الذكريات", "Start a memory session", "Commencer une séance de souvenirs"],
+  ["اقرؤوا الحكاية معًا", "Read the story together", "Lire le récit ensemble"],
+  ["إنهاء المراجعة", "Finish review", "Terminer la révision"],
+  ["انتهت المراجعة ❤️", "Review complete ❤️", "Révision terminée ❤️"],
+  ["انتهت الجلسة ❤️", "Session complete ❤️", "Séance terminée ❤️"],
+  ["شكرًا على الوقت الجميل ❤️", "Thank you for sharing this time ❤️", "Merci pour ce beau moment ❤️"],
+  ["Smart Recall ينظم مراجعة الذكريات بتلميحات اختيارية ومواعيد متباعدة يختارها المرافق. هو أداة تذكّر مساعدة، وليس علاجًا مثبتًا للخرف أو بديلًا عن الطبيب.", "Smart Recall helps organize memory reviews with optional cues and flexible intervals chosen by a caregiver. It is a support tool, not a proven treatment for dementia or a substitute for medical care.", "Smart Recall aide à organiser la révision des souvenirs avec des indices facultatifs et des intervalles choisis par un proche. C’est un outil d’accompagnement, pas un traitement reconnu de la démence ni un remplacement des soins médicaux."],
+  ["يُفضّل مشاركة شخص مألوف للمريض. استمعوا له من غير تصحيح أو ضغط؛ لو ذكرى سببت له ضيقًا، انتقلوا لذكرى مريحة أو أنهوا الجلسة. النشاط للتفاعل واستدعاء الذكريات، وليس علاجًا طبيًا أو بديلًا عن الرعاية المتخصصة.", "A familiar person should join. Listen without correcting or pressuring; if a memory causes distress, move to a comforting memory or end the session. This activity supports interaction and reminiscence; it is not medical treatment or a substitute for professional care.", "La présence d’un proche est préférable. Écoutez sans corriger ni mettre de pression ; si un souvenir provoque de la détresse, passez à un souvenir apaisant ou terminez la séance. Cette activité favorise l’échange et l’évocation, sans remplacer les soins médicaux."],
+  ["الأنشطة التالية تتضمن أسئلة وقياسًا وصفيًا للجلسة البحثية. اختاروها فقط إذا كانت مناسبة للمشارك وبموافقته، ويمكن إيقافها في أي وقت.", "The following activities include questions and descriptive research-session measures. Use them only when appropriate and with the participant’s consent; they can be stopped at any time.", "Les activités suivantes comportent des questions et des mesures descriptives pour la recherche. Choisissez-les uniquement si elles conviennent au participant et avec son accord ; elles peuvent être arrêtées à tout moment."],
+  ["تقدر كمان تضغط «اسمع السؤال» وقت اللعب.", "You can also press “Listen to the question” during an activity.", "Vous pouvez aussi appuyer sur « Écouter la question » pendant l’activité."],
+  ["سجّل الجلسات باستخدام رمز بحثي، وبعد الحصول على الموافقات المناسبة من المشاركين وأولياء الأمور عند الحاجة.", "Record sessions using a research code, after obtaining consent from participants and guardians when needed.", "Enregistrez les séances avec un code de recherche, après avoir obtenu le consentement des participants et, si nécessaire, de leurs responsables."],
+  ["كل عمود بيمثل جلسة لها دقة قابلة للحساب. الأرقام على المحور الأفقي ترتيب الجلسات المعروضة، مش تواريخها.", "Each bar represents a session with measurable accuracy. Numbers on the horizontal axis indicate display order, not dates.", "Chaque barre représente une séance dont la précision peut être calculée. Les nombres sur l’axe horizontal indiquent l’ordre d’affichage, pas les dates."],
+  ["الرسم البياني غير مدعوم في هذا المتصفح.", "Charts are not supported in this browser.", "Les graphiques ne sont pas pris en charge par ce navigateur."],
+  ["التطبيق مصمم لحفظ بيانات الألبوم والجلسات محليًا، ولا يرفع الصور أو التسجيلات. إعدادات التذكير تُحفظ في الخادم المحلي على هذا الجهاز وتُرسل إليه فقط.", "The app stores album and session data locally and does not upload photos or recordings. Reminder settings are stored on this device’s local server and sent only to it.", "L’application conserve localement les données de l’album et des séances, sans téléverser les photos ni les enregistrements. Les rappels sont stockés sur le serveur local de cet appareil."],
+  ["الصور والتسجيلات الصوتية محفوظة محليًا لكنها غير مشفّرة. استخدم جهازًا آمنًا. النسخ الاحتياطية الجديدة مشفّرة بكلمة مرور، لكن فقدان كلمة المرور يمنع استعادتها.", "Photos and audio recordings are stored locally but are not encrypted. Use a secure device. New backups are password-encrypted; losing the password means they cannot be restored.", "Les photos et enregistrements audio sont stockés localement, sans chiffrement. Utilisez un appareil sécurisé. Les nouvelles sauvegardes sont chiffrées par mot de passe ; sans celui-ci, elles ne peuvent pas être restaurées."],
+  ["إشعارات الويب تُرسل عبر خدمة الإشعارات الخاصة بالمتصفح، لذلك قد لا تصل إذا كان الجهاز مغلقًا أو غير متصل بالإنترنت.", "Web notifications use your browser’s notification service and may not arrive if the device is off or offline.", "Les notifications web passent par le service de votre navigateur et peuvent ne pas arriver si l’appareil est éteint ou hors ligne."],
+  ["دي تجربة محلية على الجهاز ده. لازم تسيبي الخادم المحلي شغال عشان يرسل التذكيرات؛ مزامنة أجهزة تانية تحتاج استضافة لاحقًا.", "Reminders run locally on this device. Keep the local server running to send them; syncing other devices requires hosting.", "Les rappels fonctionnent localement sur cet appareil. Laissez le serveur local actif ; la synchronisation d’autres appareils nécessitera un hébergement."],
+  ["إشعار المتصفح لا يشغّل الصوت تلقائيًا. عند فتحه، تظهر الذكرى المختارة على هذا الجهاز ويمكن تشغيل الصوت يدويًا.", "Browser notifications do not play audio automatically. Opening one shows the selected memory on this device, where audio can be played manually.", "Les notifications ne lancent pas l’audio automatiquement. En ouvrant une notification, le souvenir choisi s’affiche sur cet appareil et l’audio peut être lancé manuellement."],
+  ["أضيفوا حكاية وصورة من قسم حكايات العيلة لاستخدامها في التذكير.", "Add a story and photo in Family Stories to use with a reminder.", "Ajoutez un récit et une photo dans les récits familiaux pour les associer à un rappel."],
+  ["تم تحميل جدول التذكير المحفوظ.", "Saved reminder schedule loaded.", "Programmation des rappels chargée."],
+  ["تقليل التكرار لو الإشعارات متتفتحش", "Reduce reminders if notifications are not opened", "Réduire les rappels si les notifications ne sont pas ouvertes"],
+  ["ابدأي الخادم المحلي ثم افتحي التطبيق من العنوان الذي يظهر في نافذة التشغيل.", "Start the local server, then open the app at the address shown in its terminal.", "Démarrez le serveur local, puis ouvrez l’application à l’adresse indiquée dans le terminal."],
+  ["عدّل حجم النص أو فعّل التباين العالي لراحة أكبر.", "Adjust text size or enable high contrast for more comfort.", "Ajustez la taille du texte ou activez le contraste élevé pour plus de confort."],
+  ["النسخة الاحتياطية تتضمن الأفراد والحكايات والصور والتسجيلات والجلسات، وتُشفّر بكلمة مرور قبل تنزيلها. احتفظ بكلمة المرور في مكان آمن.", "The backup includes family members, stories, photos, recordings, and sessions. It is encrypted with a password before download; keep the password safe.", "La sauvegarde comprend les membres, récits, photos, enregistrements et séances. Elle est chiffrée par mot de passe avant le téléchargement ; conservez ce mot de passe en lieu sûr."],
+  ["حذف البيانات من داخل التطبيق لا يحذف النسخ الاحتياطية اللي سبق تصديرها إلى جهازك.", "Deleting data in the app does not remove backups previously exported to your device.", "La suppression des données dans l’application n’efface pas les sauvegardes déjà exportées sur votre appareil."],
+  ["ذاكرتي نموذج أولي لأنشطة التذكّر والتفاعل وجمع بيانات وصفية عن بعض الألعاب. مش علاجًا للزهايمر أو أداة تشخيص، ولا تغني عن الرعاية الطبية المتخصصة.", "Zakerty is a prototype for memory and interaction activities and descriptive game data. It is not a treatment for Alzheimer’s, a diagnostic tool, or a substitute for professional medical care.", "Zakerty est un prototype d’activités de mémoire et d’interaction, avec des données descriptives sur certains jeux. Ce n’est ni un traitement de la maladie d’Alzheimer, ni un outil de diagnostic, ni un remplacement des soins médicaux."],
+  ["اختاروا كلمة مرور لا تقل عن 8 أحرف. لن نستطيع استعادة النسخة من دونها.", "Choose a password with at least 8 characters. The backup cannot be restored without it.", "Choisissez un mot de passe d’au moins 8 caractères. Sans celui-ci, la sauvegarde ne pourra pas être restaurée."],
+  ["استخدم صورة أو تسجيلًا صوتيًا بعد موافقة صاحبه، وأضف معلومات مناسبة يوافق عليها.", "Use a photo or voice recording with the person’s consent, and add information they agree to share.", "Utilisez une photo ou un enregistrement avec l’accord de la personne, et ajoutez uniquement des informations qu’elle accepte de partager."],
+  ["الصورة بتتحفظ محليًا على الجهاز.", "The photo is saved locally on this device.", "La photo est enregistrée localement sur cet appareil."],
+  ["اختاري ملفًا صوتيًا أو سجّلي مقطعًا قصيرًا (حتى 30 ثانية). التسجيل يُحفظ على هذا الجهاز فقط.", "Choose an audio file or record a short clip (up to 30 seconds). It is saved only on this device.", "Choisissez un fichier audio ou enregistrez un court extrait (30 secondes max.). Il est conservé sur cet appareil uniquement."],
+  ["اختاروا فردًا أكبر مرتبطًا به ليظهر تحته في الشجرة، أو اتركوه بلا اختيار.", "Choose an older relative to appear above this person in the tree, or leave it blank.", "Choisissez un membre plus âgé qui apparaîtra au-dessus dans l’arbre, ou laissez ce champ vide."],
+  ["اختاري أي سنة؛ نحتفظ بالتاريخ المختار ويكون التذكير سنويًا حسب اليوم والشهر.", "Choose any year; the selected date is saved, and the reminder repeats yearly by day and month.", "Choisissez n’importe quelle année ; la date est conservée et le rappel revient chaque année au même jour et mois."],
+  ["تخطي", "Skip", "Passer"],
+  ["رتّب أفراد العيلة من الأكبر للأصغر حسب العمر المدخل. تقدر تحرّك كل اسم لفوق أو لتحت.", "Arrange family members from oldest to youngest using the ages provided. Move each name up or down.", "Classez les membres du plus âgé au plus jeune selon les âges indiqués. Déplacez chaque nom vers le haut ou le bas."],
+  ["حفظ النتيجة", "Save result", "Enregistrer le résultat"],
+  ["عرض النتائج", "View results", "Voir les résultats"],
+  ["اسمع السؤال", "Listen to the question", "Écouter la question"],
+  ["المعلومة تساعد على التذكّر", "A clue to help remember", "Un indice pour aider à se souvenir"],
+  ["تلميح: اسمع الاسم", "Hint: listen to the name", "Indice : écouter le nom"],
+  ["تلميح يساعد على التذكر", "A clue to help you remember", "Un indice pour vous aider à vous souvenir"],
+  ["مافيش إجابة غلط", "There are no wrong answers", "Il n’y a pas de mauvaise réponse"],
+  ["العودة للأنشطة", "Back to activities", "Retour aux activités"],
+  ["عودة", "Back", "Retour"],
+  ["جلسة ذكريات هادئة 🌿", "Calm memory session 🌿", "Séance de souvenirs paisible 🌿"],
+  ["خدوا وقتكم. مفيش إجابة مطلوبة، وممكن تتفرجوا أو تسمعوا بس.", "Take your time. No answer is required; you can simply look or listen.", "Prenez votre temps. Aucune réponse n’est nécessaire ; vous pouvez simplement regarder ou écouter."],
+  ["Smart Recall · مراجعة هادئة", "Smart Recall · Calm review", "Smart Recall · Révision paisible"],
+  ["Smart Recall ينظم مراجعة الذكريات بتلميحات ومواعيد متباعدة يختارها المرافق. هو أداة تذكّر مساعدة، وليس علاجًا مثبتًا للخرف أو بديلًا عن الطبيب.", "Smart Recall organizes memory reviews with optional cues and flexible intervals chosen by the caregiver. It is a support tool, not a proven dementia treatment or a substitute for medical care.", "Smart Recall organise les révisions avec des indices facultatifs et des intervalles souples choisis par un proche. C’est un outil d’accompagnement, pas un traitement reconnu de la démence ni un remplacement des soins médicaux."],
+  ["اختاروا نشاطًا مناسبًا. جلسة الذكريات هادئة، من غير توقيت أو إجابات صح وغلط، وممكن تنهوها في أي وقت.", "Choose an activity that feels right. Memory sessions are calm, untimed, have no right or wrong answers, and can end at any time.", "Choisissez une activité adaptée. Les séances sont paisibles, sans minuterie ni bonne ou mauvaise réponse, et peuvent s’arrêter à tout moment."],
+  ["فاكر الحكاية؟", "Remember the story?", "Vous souvenez-vous du récit ?"],
+  ["اقرأ المعلومة وحاول تعرف مين الشخص المقصود.", "Read the clue and try to identify the person.", "Lisez l’indice et essayez de trouver la personne concernée."],
+  ["دي ذكرى مرتبطة بـ", "This memory is connected to", "Ce souvenir est lié à"],
+  ["لو حابين، احكوا مع بعض عن الصورة أو الإحساس اللي بتفكّركم بيه.", "If you like, talk together about the photo or the feeling it brings back.", "Si vous le souhaitez, parlez ensemble de la photo ou des émotions qu’elle évoque."],
+  ["ممكن تكتفوا بمشاهدة الصورة معًا.", "You can simply look at the photo together.", "Vous pouvez simplement regarder la photo ensemble."],
+  ["نقدر نكتفوا بمشاهدة الصورة معًا.", "We can simply look at the photo together.", "Nous pouvons simplement regarder la photo ensemble."],
+  ["انتقلوا لذكرى مريحة أو أنهوا الجلسة.", "Move to a comforting memory or end the session.", "Passez à un souvenir apaisant ou terminez la séance."],
+  ["ابدأوا بالصورة وخدوا وقتكم. مفيش إجابة غلط؛ المرافق يختار التلميح المناسب.", "Start with the photo and take your time. There are no wrong answers; the caregiver can choose a helpful clue.", "Commencez par la photo et prenez votre temps. Il n’y a pas de mauvaise réponse ; un proche peut choisir un indice adapté."],
+  ["Smart Recall · مراجعة هادئة", "Smart Recall · A calm review", "Smart Recall · Révision paisible"],
+  ["مفيش ذكرى مستحقة للمراجعة اليوم. يمكنكم مراجعة واحدة مبكرًا أو العودة لاحقًا.", "No memories are due for review today. You can review one early or come back later.", "Aucun souvenir n’est à revoir aujourd’hui. Vous pouvez en revoir un à l’avance ou revenir plus tard."],
+  ["ابدأوا بالصورة وخدوا وقتكم. مفيش إجابة غلط؛ المرافق يختار التلميح المناسب.", "Start with the photo and take your time. There are no wrong answers; the caregiver can choose a helpful clue.", "Commencez par la photo et prenez votre temps. Il n’y a pas de mauvaise réponse ; un proche peut choisir un indice adapté."],
+  ["هل الصورة دي مألوفة؟ استنوا براحتكم، أو افتحوا تلميحًا.", "Does this photo feel familiar? Take your time, or reveal a clue.", "Cette photo vous semble-t-elle familière ? Prenez votre temps ou affichez un indice."],
+  ["دي حكاية مرتبطة بـ", "This is a story about", "Ce récit est lié à"],
+  ["نقدر نقرأ الحكاية معًا.", "We can read the story together.", "Nous pouvons lire le récit ensemble."],
+  ["ذكرى تانية", "Another memory", "Un autre souvenir"],
+  ["اختاروا موعد الرجوع للذكرى، حسب اللي كان مريحًا", "Choose when to revisit this memory, based on what felt comfortable", "Choisissez quand revoir ce souvenir, selon ce qui était confortable"],
+  ["كانت مألوفة", "It felt familiar", "Le souvenir était familier"],
+  ["احتجنا تلميحًا", "We needed a clue", "Nous avons eu besoin d’un indice"],
+  ["قرأنا أو سمعنا الحكاية", "We read or listened to the story", "Nous avons lu ou écouté le récit"],
+  ["المواعيد للتنظيم فقط حسب مقدار المساعدة، ومش درجات أو قياسًا طبيًا. اتركوا الذكرى بلا موعد لو تحبوا.", "These dates are only for organizing reviews according to the support needed—not scores or medical measures. You can leave a memory unscheduled.", "Ces dates servent uniquement à organiser les révisions selon l’aide nécessaire ; ce ne sont ni des scores ni des mesures médicales. Vous pouvez ne pas programmer un souvenir."],
+  ["شكرًا على مشاركة الذكريات. يمكنكم الرجوع لها في أي وقت، من غير درجات أو تقييم.", "Thank you for sharing these memories. You can return to them anytime, with no scores or evaluation.", "Merci d’avoir partagé ces souvenirs. Vous pouvez les retrouver à tout moment, sans score ni évaluation."],
+  ["ولا يهمك، الإجابة هي", "That’s okay. The answer is", "Ce n’est pas grave. La réponse est"],
+  ["إجابة صحيحة، برافو! ❤️", "That’s right—well done! ❤️", "Bonne réponse, bravo ! ❤️"],
+  ["الترتيب صحيح! أحسنت. ❤️", "That order is right—well done! ❤️", "Le classement est correct, bravo ! ❤️"],
+  ["لسه فيه اختلاف بسيط. جرّب تاني براحتك.", "There’s a small difference. Take your time and try again.", "Il y a encore une petite différence. Prenez votre temps et réessayez."],
+  ["ابدأوا حكاية عائلية، وارجعوا لها معًا وقت ما تحبوا.", "Add a family story and revisit it together whenever you like.", "Ajoutez un récit familial et retrouvez-le ensemble quand vous le souhaitez."],
+  ["أضيفوا يوم وشهر الميلاد لشخص عشان يظهر هنا.", "Add a family member’s birth day and month to see it here.", "Ajoutez le jour et le mois de naissance d’un proche pour l’afficher ici."],
+  ["أضفوا يوم وشهر الميلاد لشخص عشان يظهر هنا.", "Add a family member’s birth day and month to see it here.", "Ajoutez le jour et le mois de naissance d’un proche pour l’afficher ici."],
+  ["التسجيل التالي", "Next recording", "Enregistrement suivant"],
+  ["تخطي التسجيل", "Skip recording", "Passer l’enregistrement"],
+  ["تحقق من الترتيب", "Check the order", "Vérifier l’ordre"],
+  ["اقرأوا الحكاية معًا", "Read the story together", "Lire le récit ensemble"],
+  ["إنهاء الجلسة الآن", "End the session now", "Terminer la séance maintenant"],
+  ["لا توجد حكاية مضافة بعد.", "No story has been added yet.", "Aucun récit n’a encore été ajouté."],
+  ["فرد غير موجود في الألبوم", "Person not found in the album", "Personne introuvable dans l’album"],
+  ["بدون ربط", "No parent link", "Aucun lien parental"],
+  ["تشغيل الصوت غير مدعوم في هذا المتصفح.", "Audio playback is not supported in this browser.", "La lecture audio n’est pas prise en charge par ce navigateur."],
+  ["التعرّف على الكلام غير مدعوم هنا. استخدموا الأزرار أو لوحة المفاتيح.", "Speech recognition is not supported here. Use the buttons or keyboard instead.", "La reconnaissance vocale n’est pas prise en charge ici. Utilisez les boutons ou le clavier."],
+  ["لم أسمع كلامًا واضحًا. حاولوا مرة أخرى أو استخدموا الأزرار.", "I could not hear that clearly. Try again or use the buttons.", "Je n’ai pas bien compris. Réessayez ou utilisez les boutons."],
+  ["تعذر تشغيل الميكروفون. استخدموا الأزرار المتاحة.", "Could not start the microphone. Use the available buttons.", "Impossible de démarrer le micro. Utilisez les boutons disponibles."],
+  ["أُضيف الكلام إلى نص الحكاية. راجعوه قبل الحفظ.", "The recognized words were added to the story. Review them before saving.", "Le texte reconnu a été ajouté au récit. Relisez-le avant de l’enregistrer."]
+];
+const translationMap = new Map(
+  translationRows.flatMap(([arabic, english, french]) => [
+    [arabic, { en: english, fr: french }]
+  ])
+);
 
 const state = {
   people: readStorage(STORAGE_KEY, []),
@@ -26,6 +334,7 @@ const state = {
   currentGame: null,
   game: null,
   memoryJourney: null,
+  smartRecall: null,
   editingPersonId: null,
   autoReadQuestions: readStorage(VOICE_SETTING_KEY, false) === true,
   pendingPersonAudio: null,
@@ -38,7 +347,11 @@ const state = {
   storyRecorder: null,
   storyRecordingStream: null,
   storyRecordingChunks: [],
-  storyRecordingTimeout: null
+  storyRecordingTimeout: null,
+  activeMemoryActions: null,
+  activeSpeechRecognition: null,
+  reminderMemoryId: readStorage(REMINDER_MEMORY_KEY, ""),
+  reminderPreviewToken: 0
 };
 
 function readStorage(key, fallback) {
@@ -50,12 +363,160 @@ function readStorage(key, fallback) {
   }
 }
 
+function getAccessibilitySettings() {
+  const saved = readStorage(ACCESSIBILITY_KEY, {});
+  return { ...ACCESSIBILITY_DEFAULTS, ...(saved && typeof saved === "object" ? saved : {}) };
+}
+
+function getLocaleTag() {
+  return {
+    ar: "ar-EG",
+    en: "en-US",
+    fr: "fr-FR"
+  }[getAccessibilitySettings().language] || "ar-EG";
+}
+
+function translatedPhrase(source, language = getAccessibilitySettings().language) {
+  if (language === "ar") return source;
+  const phrase = source.trim().replace(/\s+/g, " ");
+  const exact = translationMap.get(phrase)?.[language];
+  if (exact) return exact;
+
+  const recallProgress = phrase.match(/^ذكرى (\d+) من (\d+)$/);
+  if (recallProgress) {
+    return language === "fr"
+      ? `Souvenir ${recallProgress[1]} sur ${recallProgress[2]}`
+      : `Memory ${recallProgress[1]} of ${recallProgress[2]}`;
+  }
+  const questionProgress = phrase.match(/^السؤال (\d+) من (\d+)$/);
+  if (questionProgress) {
+    return language === "fr"
+      ? `Question ${questionProgress[1]} sur ${questionProgress[2]}`
+      : `Question ${questionProgress[1]} of ${questionProgress[2]}`;
+  }
+  const weeklyMemory = phrase.match(
+    /^لو الوقت مناسب، افتحوا «(.+)» واستمتعوا بذكرى العيلة سوا\.$/
+  );
+  if (weeklyMemory) {
+    return language === "fr"
+      ? `Si le moment vous convient, ouvrez « ${weeklyMemory[1]} » et profitez ensemble de ce souvenir.`
+      : `If it feels like a good time, open “${weeklyMemory[1]}” and enjoy this memory together.`;
+  }
+  const todayBirthday = phrase.match(/^النهارده · (.+)$/);
+  if (todayBirthday) {
+    return language === "fr"
+      ? `Aujourd’hui · ${todayBirthday[1]}`
+      : `Today · ${todayBirthday[1]}`;
+  }
+  const tomorrowBirthday = phrase.match(/^بكرة · (.+)$/);
+  if (tomorrowBirthday) {
+    return language === "fr"
+      ? `Demain · ${tomorrowBirthday[1]}`
+      : `Tomorrow · ${tomorrowBirthday[1]}`;
+  }
+  const upcomingBirthday = phrase.match(/^بعد (\d+) يوم · (.+)$/);
+  if (upcomingBirthday) {
+    return language === "fr"
+      ? `Dans ${upcomingBirthday[1]} jour(s) · ${upcomingBirthday[2]}`
+      : `In ${upcomingBirthday[1]} day(s) · ${upcomingBirthday[2]}`;
+  }
+  const whoQuestion = phrase.match(
+    /^مين ده؟ اختار الاسم المناسب للصورة\. السؤال (\d+) من (\d+)\.$/
+  );
+  if (whoQuestion) {
+    return language === "fr"
+      ? `Qui est-ce ? Choisissez le nom correspondant à la photo. Question ${whoQuestion[1]} sur ${whoQuestion[2]}.`
+      : `Who is this? Choose the name that matches the photo. Question ${whoQuestion[1]} of ${whoQuestion[2]}.`;
+  }
+  return source;
+}
+
+function translatedAttribute(source, attribute, language) {
+  const key = `@${attribute}:${source.trim()}`;
+  if (language === "ar") return source;
+  return translationMap.get(key)?.[language] || source;
+}
+
+function applyTextTranslation(node, language) {
+  let source = textSources.get(node);
+  if (source === undefined || node.nodeValue !== translatedText.get(node)) {
+    source = node.nodeValue;
+    textSources.set(node, source);
+  }
+  const leading = source.match(/^\s*/)?.[0] || "";
+  const trailing = source.match(/\s*$/)?.[0] || "";
+  const content = source.slice(leading.length, source.length - trailing.length);
+  const translated = translatedPhrase(content, language);
+  const value = content ? `${leading}${translated}${trailing}` : source;
+  if (node.nodeValue !== value) node.nodeValue = value;
+  translatedText.set(node, value);
+}
+
+function applyAttributeTranslations(element, language) {
+  let savedAttributes = attributeSources.get(element);
+  if (!savedAttributes) {
+    savedAttributes = new Map();
+    attributeSources.set(element, savedAttributes);
+  }
+  ["aria-label", "placeholder", "title", "alt"].forEach((attribute) => {
+    if (!element.hasAttribute(attribute)) return;
+    let saved = savedAttributes.get(attribute);
+    const current = element.getAttribute(attribute);
+    if (!saved || current !== saved.translated) {
+      saved = { source: current, translated: current };
+      savedAttributes.set(attribute, saved);
+    }
+    saved.translated = translatedAttribute(saved.source, attribute, language);
+    if (current !== saved.translated) {
+      element.setAttribute(attribute, saved.translated);
+    }
+  });
+}
+
+function translateSubtree(root, language) {
+  if (root.nodeType === Node.TEXT_NODE) {
+    applyTextTranslation(root, language);
+    return;
+  }
+  if (root.nodeType !== Node.ELEMENT_NODE && root.nodeType !== Node.DOCUMENT_FRAGMENT_NODE) return;
+  if (root.nodeType === Node.ELEMENT_NODE) applyAttributeTranslations(root, language);
+  root.childNodes.forEach((child) => translateSubtree(child, language));
+}
+
+function applyLanguageSettings(language = getAccessibilitySettings().language) {
+  const selectedLanguage = ["ar", "en", "fr"].includes(language) ? language : "ar";
+  const languageTag = { ar: "ar", en: "en", fr: "fr" }[selectedLanguage];
+  document.documentElement.lang = languageTag;
+  document.documentElement.dir = selectedLanguage === "ar" ? "rtl" : "ltr";
+  document.title = translatedPhrase("ذاكرتي | Zakerty", selectedLanguage);
+  const themeColor = document.querySelector('meta[name="theme-color"]');
+  if (themeColor) themeColor.content = getAccessibilitySettings().theme === "dark"
+    ? "#171a19"
+    : "#315c55";
+  if (currentTranslationLanguage !== selectedLanguage) {
+    translateSubtree(document.body, selectedLanguage);
+    currentTranslationLanguage = selectedLanguage;
+  }
+
+  if (!translationObserver && "MutationObserver" in window) {
+    translationObserver = new MutationObserver((records) => {
+      const currentLanguage = getAccessibilitySettings().language;
+      records.forEach((record) => {
+        record.addedNodes.forEach((node) => translateSubtree(node, currentLanguage));
+      });
+    });
+    translationObserver.observe(document.body, { childList: true, subtree: true });
+  }
+}
+
 function difficultyName(difficulty) {
-  return ({
-    easy: "سهل",
-    normal: "متوسط",
-    hard: "تحدي"
-  })[difficulty] || "غير محدد";
+  const names = {
+    easy: ["سهل", "Easy", "Facile"],
+    normal: ["متوسط", "Medium", "Moyen"],
+    hard: ["تحدي", "Challenge", "Défi"]
+  };
+  const languageIndex = { ar: 0, en: 1, fr: 2 }[getAccessibilitySettings().language] || 0;
+  return names[difficulty]?.[languageIndex] || "—";
 }
 
 function savePeople() {
@@ -251,6 +712,12 @@ async function deleteStoryAudio(id) {
       reject(transaction.error);
     };
   });
+}
+
+async function getMemoryAudio(story, person) {
+  if (story.hasAudio) return getStoryAudio(story.id);
+  if (person?.hasAudio) return getAudio(person.id);
+  return null;
 }
 
 async function deletePhoto(id) {
@@ -457,6 +924,7 @@ removePersonAudioButton.addEventListener("click", () => {
 $("#addPersonBtn")?.addEventListener("click", () => {
   state.editingPersonId = null;
   personForm.reset();
+  populateFamilyParentOptions();
   resetPersonAudioForm();
   personImage.required = true;
   $("#personDialogTitle").textContent = "إضافة فرد من العيلة";
@@ -540,6 +1008,7 @@ personForm?.addEventListener("submit", async (event) => {
       id,
       name,
       relation,
+      parentId: $("#personParent").value || "",
       age: ageValue ? Number(ageValue) : null,
       note,
       favoriteFood,
@@ -551,6 +1020,11 @@ personForm?.addEventListener("submit", async (event) => {
         : Boolean(editingPerson?.hasAudio && !state.removePersonAudio),
       createdAt: new Date().toISOString()
     };
+
+    const candidatePeople = editingPerson
+      ? state.people.map((person) => person.id === id ? updatedPerson : person)
+      : [...state.people, updatedPerson];
+    validateFamilyTree(candidatePeople);
 
     if (editingPerson) {
       updatedPerson.createdAt = editingPerson.createdAt;
@@ -608,6 +1082,8 @@ function openPersonEditor(id) {
   $("#personDialogTitle").textContent = "تعديل بيانات فرد من العيلة";
   $("#personName").value = person.name;
   $("#personRelation").value = person.relation;
+  populateFamilyParentOptions(person);
+  $("#personParent").value = person.parentId || "";
   $("#personAge").value = Number.isFinite(person.age) ? person.age : "";
   $("#personNote").value = person.note || "";
   $("#personFavoriteFood").value = person.favoriteFood || "";
@@ -625,6 +1101,71 @@ function openPersonEditor(id) {
     audioStatus.textContent = "يوجد تسجيل صوتي محفوظ. اختاري ملفًا جديدًا لاستبداله أو احذفيه.";
   }
   personDialog.showModal();
+}
+
+function getFamilyDescendants(personId) {
+  const descendants = new Set();
+  const pending = [personId];
+  while (pending.length) {
+    const parentId = pending.pop();
+    state.people.forEach((person) => {
+      if (person.parentId === parentId && !descendants.has(person.id)) {
+        descendants.add(person.id);
+        pending.push(person.id);
+      }
+    });
+  }
+  return descendants;
+}
+
+function populateFamilyParentOptions(person = null) {
+  const select = $("#personParent");
+  if (!select) return;
+  select.replaceChildren();
+  const rootOption = document.createElement("option");
+  rootOption.value = "";
+  rootOption.textContent = "بدون ربط";
+  select.append(rootOption);
+
+  const excluded = person
+    ? new Set([person.id, ...getFamilyDescendants(person.id)])
+    : new Set();
+  state.people
+    .filter((member) => !excluded.has(member.id))
+    .forEach((member) => {
+      const option = document.createElement("option");
+      option.value = member.id;
+      option.textContent = `${member.name} — ${member.relation}`;
+      select.append(option);
+    });
+}
+
+function validateFamilyTree(people) {
+  const byId = new Map(people.map((person) => [person.id, person]));
+  for (const person of people) {
+    if (person.parentId && (!byId.has(person.parentId) || person.parentId === person.id)) {
+      throw new Error(`صلة شجرة العيلة للشخص ${person.name} غير صالحة.`);
+    }
+  }
+
+  const checked = new Set();
+  function visit(personId, path) {
+    if (path.has(personId)) {
+      throw new Error("روابط شجرة العيلة تحتوي على حلقة. راجعوا اختيار الوالد أو الوالدة.");
+    }
+    if (checked.has(personId)) return;
+    const person = byId.get(personId);
+    if (!person?.parentId) {
+      checked.add(personId);
+      return;
+    }
+    path.add(personId);
+    visit(person.parentId, path);
+    path.delete(personId);
+    checked.add(personId);
+  }
+
+  people.forEach((person) => visit(person.id, new Set()));
 }
 
 async function renderFamily() {
@@ -662,6 +1203,8 @@ async function renderFamily() {
   if (noResults) {
     noResults.classList.toggle("hidden", state.people.length === 0 || people.length > 0);
   }
+
+  await renderFamilyTree();
 
   for (const person of people) {
     const card = document.createElement("article");
@@ -746,8 +1289,95 @@ async function renderFamily() {
   }
 }
 
+async function renderFamilyTree() {
+  const tree = $("#familyTree");
+  if (!tree) return;
+  revokeImageUrls(tree);
+  tree.replaceChildren();
+  if (!state.people.length) return;
+
+  const childrenByParent = new Map();
+  state.people.forEach((person) => {
+    const parentId = state.people.some((member) => member.id === person.parentId)
+      ? person.parentId
+      : "";
+    if (!childrenByParent.has(parentId)) childrenByParent.set(parentId, []);
+    childrenByParent.get(parentId).push(person);
+  });
+
+  const rendered = new Set();
+  async function createBranch(person, ancestors = new Set()) {
+    const item = document.createElement("li");
+    item.className = "family-tree-branch";
+    const card = document.createElement("article");
+    card.className = "family-tree-person";
+    const title = document.createElement("strong");
+    title.textContent = person.name;
+    const relation = document.createElement("span");
+    relation.textContent = person.relation;
+
+    try {
+      const url = await photoUrl(person.id);
+      if (url) {
+        const image = document.createElement("img");
+        image.src = url;
+        image.alt = `صورة ${person.name}`;
+        image.loading = "lazy";
+        image.dataset.objectUrl = url;
+        card.append(image);
+      }
+    } catch (error) {
+      console.error(`Could not load family tree photo for ${person.name}:`, error);
+    }
+    card.append(title, relation);
+    item.append(card);
+    rendered.add(person.id);
+
+    const path = new Set(ancestors);
+    path.add(person.id);
+    const children = (childrenByParent.get(person.id) || [])
+      .filter((child) => !path.has(child.id));
+    if (children.length) {
+      const list = document.createElement("ul");
+      list.className = "family-tree-children";
+      for (const child of children) {
+        list.append(await createBranch(child, path));
+      }
+      item.append(list);
+    }
+    return item;
+  }
+
+  const roots = childrenByParent.get("") || [];
+  const forest = document.createElement("ul");
+  forest.className = "family-tree-roots";
+  for (const root of roots) forest.append(await createBranch(root));
+  for (const person of state.people) {
+    if (!rendered.has(person.id)) forest.append(await createBranch(person));
+  }
+  tree.append(forest);
+}
+
 $("#familySearch")?.addEventListener("input", renderFamily);
 $("#familySort")?.addEventListener("change", renderFamily);
+
+function showFamilyView(view) {
+  const treeVisible = view === "tree";
+  $("#familyTree")?.classList.toggle("hidden", !treeVisible);
+  $("#familyList")?.classList.toggle("hidden", treeVisible);
+  $("#familyCardsView")?.classList.toggle("active", !treeVisible);
+  $("#familyTreeView")?.classList.toggle("active", treeVisible);
+  $("#familyCardsView")?.setAttribute("aria-pressed", String(!treeVisible));
+  $("#familyTreeView")?.setAttribute("aria-pressed", String(treeVisible));
+  $("#familyEmpty")?.classList.toggle("hidden", state.people.length > 0);
+}
+
+$("#familyCardsView")?.addEventListener("click", () => showFamilyView("cards"));
+$("#familyTreeView")?.addEventListener("click", () => showFamilyView("tree"));
+document.querySelector("[data-go-family-tree]")?.addEventListener("click", async () => {
+  await showPage("family");
+  showFamilyView("tree");
+});
 
 async function removePerson(id) {
   const person = state.people.find((item) => item.id === id);
@@ -757,7 +1387,9 @@ async function removePerson(id) {
     return;
   }
 
-  state.people = state.people.filter((item) => item.id !== id);
+  state.people = state.people
+    .filter((item) => item.id !== id)
+    .map((item) => item.parentId === id ? { ...item, parentId: "" } : item);
   savePeople();
   await deletePhoto(id);
   await deleteAudio(id);
@@ -951,12 +1583,12 @@ async function renderStories() {
     const metadata = document.createElement("p");
     metadata.className = "story-meta";
     const storyDate = story.date
-      ? new Date(`${story.date}T12:00:00`).toLocaleDateString("ar-EG", {
+      ? new Date(`${story.date}T12:00:00`).toLocaleDateString(getLocaleTag(), {
           year: "numeric",
           month: "long",
           day: "numeric"
         })
-      : new Date(story.createdAt).toLocaleDateString("ar-EG");
+      : new Date(story.createdAt).toLocaleDateString(getLocaleTag());
     metadata.textContent = `${person ? `${person.name} · ${person.relation}` : "فرد غير موجود في الألبوم"} · ${storyDate}`;
     const content = document.createElement("p");
     content.className = "story-content";
@@ -1037,6 +1669,7 @@ async function renderStories() {
     card.append(actions);
     timeline.append(card);
   }
+  populateReminderMemories();
 }
 
 $("#weeklyChallengeButton")?.addEventListener("click", async () => {
@@ -1096,7 +1729,7 @@ function birthdayDaysAway(birthday) {
 function formatBirthday(birthday) {
   if (!isValidBirthday(birthday)) return "";
   const [, month, day] = birthdayParts(birthday);
-  return new Date(2000, month - 1, day).toLocaleDateString("ar-EG", {
+  return new Date(2000, month - 1, day).toLocaleDateString(getLocaleTag(), {
     day: "numeric",
     month: "long"
   });
@@ -1218,6 +1851,100 @@ function setReminderStatus(message, isError = false) {
   status.classList.toggle("error", isError);
 }
 
+function populateReminderMemories() {
+  const select = $("#reminderMemory");
+  if (!select) return;
+  const selectedId = select.value || state.reminderMemoryId;
+  select.replaceChildren();
+  state.stories.forEach((story) => {
+    const option = document.createElement("option");
+    option.value = story.id;
+    option.textContent = story.title;
+    select.append(option);
+  });
+  if (state.stories.some((story) => story.id === selectedId)) {
+    select.value = selectedId;
+  } else if (state.stories.length) {
+    select.value = state.stories[0].id;
+  }
+  select.disabled = !state.stories.length;
+  updateReminderSaveAvailability();
+  renderReminderMemoryPreview();
+}
+
+function updateReminderSaveAvailability() {
+  const needsMemory = $("#reminderMessage")?.value === "memory";
+  $("#reminderSaveBtn").disabled =
+    Boolean($("#reminderEnabled")?.checked && needsMemory && !state.stories.length);
+}
+
+async function renderReminderMemoryPreview() {
+  const preview = $("#reminderMemoryPreview");
+  if (!preview) return;
+  const token = ++state.reminderPreviewToken;
+  revokeImageUrls(preview);
+  preview.replaceChildren();
+  const story = state.stories.find((item) => item.id === $("#reminderMemory")?.value);
+  if (!story) {
+    const message = document.createElement("p");
+    message.className = "help";
+    message.textContent = "أضيفوا حكاية وصورة من قسم حكايات العيلة لاستخدامها في التذكير.";
+    preview.append(message);
+    return;
+  }
+  const person = state.people.find((item) => item.id === story.personId);
+  const title = document.createElement("strong");
+  title.textContent = story.title;
+  preview.append(title);
+  if (person) {
+    try {
+      const photo = await getPhoto(person.id);
+      if (photo) {
+        if (token !== state.reminderPreviewToken) return;
+        const image = document.createElement("img");
+        const url = URL.createObjectURL(photo);
+        image.src = url;
+        image.alt = `صورة مرتبطة بذكرى ${story.title}`;
+        image.dataset.objectUrl = url;
+        preview.append(image);
+      }
+    } catch (error) {
+      console.error("Could not load reminder memory photo:", error);
+    }
+  }
+  if (story.hasAudio || person?.hasAudio) {
+    try {
+      const audio = await getMemoryAudio(story, person);
+      if (audio) {
+        if (token !== state.reminderPreviewToken) return;
+        const player = document.createElement("audio");
+        player.controls = true;
+        player.preload = "none";
+        player.setAttribute("aria-label", `صوت الذكرى ${story.title}`);
+        const url = URL.createObjectURL(audio);
+        player.src = url;
+        player.dataset.objectUrl = url;
+        preview.append(player);
+      }
+    } catch (error) {
+      console.error("Could not load reminder memory audio:", error);
+    }
+  } else {
+    const text = document.createElement("p");
+    text.className = "help";
+    text.textContent = "الحكاية مرتبطة بصورة. يمكنكم إضافة تسجيل للحكاية أو للشخص.";
+    preview.append(text);
+  }
+}
+
+$("#reminderMemory")?.addEventListener("change", renderReminderMemoryPreview);
+$("#reminderMessage")?.addEventListener("change", () => {
+  const useMemory = $("#reminderMessage").value === "memory";
+  $("#reminderMemoryField").classList.toggle("hidden", !useMemory);
+  populateReminderMemories();
+});
+$("#reminderEnabled")?.addEventListener("change", updateReminderSaveAvailability);
+
 function reminderDays() {
   return [...document.querySelectorAll(".reminder-day-list input:checked")]
     .map((input) => Number(input.value));
@@ -1231,6 +1958,8 @@ function applyReminderSettings(reminder) {
   document.querySelectorAll(".reminder-day-list input").forEach((input) => {
     input.checked = reminder.days.includes(Number(input.value));
   });
+  $("#reminderMemoryField").classList.toggle("hidden", reminder.message !== "memory");
+  populateReminderMemories();
 }
 
 async function requestReminderPermission() {
@@ -1293,6 +2022,13 @@ async function saveReminderSettings() {
   if ($("#reminderEnabled").checked && !days.length) {
     throw new Error("اختاري يومًا واحدًا على الأقل.");
   }
+  if (
+    $("#reminderEnabled").checked &&
+    $("#reminderMessage").value === "memory" &&
+    !$("#reminderMemory").value
+  ) {
+    throw new Error("اختاروا حكاية واحدة على الأقل لربطها بالتذكير.");
+  }
 
   const registration = await navigator.serviceWorker.getRegistration();
   const subscription = await registration?.pushManager.getSubscription();
@@ -1318,6 +2054,14 @@ async function saveReminderSettings() {
     })
   });
 
+  state.reminderMemoryId = $("#reminderMemory").value || "";
+  if ($("#reminderMessage").value !== "memory") state.reminderMemoryId = "";
+  try {
+    localStorage.setItem(REMINDER_MEMORY_KEY, JSON.stringify(state.reminderMemoryId));
+  } catch (error) {
+    console.error("Could not save local reminder memory:", error);
+    throw new Error("تم حفظ جدول التذكير، لكن تعذر حفظ الذكرى على هذا الجهاز.");
+  }
   setReminderStatus(
     $("#reminderEnabled").checked
       ? "تم حفظ الجدول. لازم يفضل الخادم المحلي شغال لإرسال التذكير."
@@ -1371,6 +2115,7 @@ bindReminderAction("reminderStopBtn", stopReminders);
 bindReminderAction("reminderUnsubscribeBtn", disconnectReminderDevice);
 
 async function loadReminderSettings() {
+  populateReminderMemories();
   if (location.protocol === "file:") {
     setReminderStatus(
       "لتجربة التذكيرات، شغّلي الخادم المحلي وافتحي التطبيق من http://127.0.0.1:3000."
@@ -1411,26 +2156,256 @@ function shuffle(items) {
   return result;
 }
 
-function speakArabic(text) {
+function speakArabic(text, options = {}) {
   if (!("speechSynthesis" in window) || !("SpeechSynthesisUtterance" in window)) {
     return false;
   }
 
   try {
+    const settings = getAccessibilitySettings();
+    const localizedText = translatedPhrase(text, settings.language);
+    const repeatCount = [1, 2, 3].includes(Number(settings.instructionRepeats))
+      ? Number(settings.instructionRepeats)
+      : 1;
+    const audioText = options.instruction === true
+      ? Array(repeatCount).fill(localizedText).join(". ")
+      : localizedText;
+    const containsArabic = /\p{Script=Arabic}/u.test(audioText);
+    const languageCode = containsArabic
+      ? "ar"
+      : settings.language === "fr" ? "fr" : settings.language === "en" ? "en" : "ar";
     window.speechSynthesis.cancel();
 
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = "ar-EG";
-    utterance.rate = 0.85;
+    const utterance = new SpeechSynthesisUtterance(audioText);
+    utterance.lang = languageCode === "ar"
+      ? "ar-EG"
+      : languageCode === "fr" ? "fr-FR" : "en-US";
+    utterance.rate = Math.min(1.4, Math.max(0.6, Number(settings.speechRate) || 0.9));
     utterance.pitch = 1;
+    const voice = window.speechSynthesis.getVoices()
+      .find((candidate) => candidate.lang.toLocaleLowerCase().startsWith(languageCode));
+    if (voice) utterance.voice = voice;
 
     window.speechSynthesis.speak(utterance);
     return true;
   } catch (error) {
-    console.error("Arabic speech playback failed:", error);
+    console.error("Speech playback failed:", error);
     return false;
   }
 }
+
+function speechRecognitionConstructor() {
+  return window.SpeechRecognition || window.webkitSpeechRecognition || null;
+}
+
+function startArabicSpeechInput(onText, statusElement, button) {
+  const SpeechRecognition = speechRecognitionConstructor();
+  if (!SpeechRecognition) {
+    statusElement.textContent = "التعرّف على الكلام غير مدعوم هنا. استخدموا الأزرار أو لوحة المفاتيح.";
+    return;
+  }
+  if (state.activeSpeechRecognition) {
+    state.activeSpeechRecognition.stop();
+  }
+
+  const recognition = new SpeechRecognition();
+  state.activeSpeechRecognition = recognition;
+  recognition.lang = {
+    ar: "ar-EG",
+    en: "en-US",
+    fr: "fr-FR"
+  }[getAccessibilitySettings().language] || "ar-EG";
+  recognition.continuous = false;
+  recognition.interimResults = false;
+  recognition.maxAlternatives = 1;
+  button.disabled = true;
+  statusElement.textContent = "جاري الاستماع… قولوا الأمر الآن.";
+  recognition.onresult = (event) => {
+    const text = event.results?.[0]?.[0]?.transcript?.trim();
+    if (text) onText(text);
+    else statusElement.textContent = "لم أسمع كلامًا واضحًا. حاولوا مرة أخرى أو استخدموا الأزرار.";
+  };
+  recognition.onerror = (event) => {
+    const message = event.error === "not-allowed"
+      ? "لم يُسمح باستخدام الميكروفون. يمكنكم تفعيل الإذن من إعدادات المتصفح."
+      : event.error === "no-speech"
+        ? "لم أسمع كلامًا. اضغطوا الزر وحاولوا مرة أخرى."
+        : "تعذر التعرّف على الكلام. استخدموا الأزرار المتاحة.";
+    statusElement.textContent = message;
+  };
+  recognition.onend = () => {
+    if (state.activeSpeechRecognition === recognition) {
+      state.activeSpeechRecognition = null;
+    }
+    button.disabled = false;
+  };
+  try {
+    recognition.start();
+  } catch (error) {
+    state.activeSpeechRecognition = null;
+    button.disabled = false;
+    statusElement.textContent = "تعذر تشغيل الميكروفون. استخدموا الأزرار المتاحة.";
+    console.error("Could not start Arabic speech recognition:", error);
+  }
+}
+
+function normalizeVoiceCommand(value) {
+  return value
+    .toLocaleLowerCase()
+    .replace(/[\u064B-\u065F\u0670]/g, "")
+    .replace(/[إأآٱ]/g, "ا")
+    .replace(/ة/g, "ه")
+    .replace(/[،,.!?؟]/g, "")
+    .trim();
+}
+
+function voiceCommandIncludes(command, phrases) {
+  return phrases.some((phrase) => command.includes(phrase));
+}
+
+function handleVoiceCommand(transcript) {
+  const command = normalizeVoiceCommand(transcript);
+  const status = $("#voiceCommandStatus");
+  const language = getAccessibilitySettings().language;
+  const heard = {
+    ar: `سمعت: «${transcript}»`,
+    en: `Heard: “${transcript}”`,
+    fr: `J’ai entendu : « ${transcript} »`
+  };
+  status.textContent = heard[language] || heard.ar;
+
+  const actions = state.activeMemoryActions;
+  if (actions) {
+    const commands = {
+      ar: {
+        finish: ["انهاء", "خلاص"],
+        next: ["التالي", "ذكره تانيه"],
+        hint: ["تلميح", "ساعدني", "معلومه"],
+        story: ["اقرا الحكايه", "اسمع الحكايه"],
+        familiar: ["كانت مالوفه", "اسبوع"],
+        supported: ["احتجنا تلميح", "ثلاثه ايام"],
+        reviewSoon: ["قريب", "بكره", "يوم"]
+      },
+      en: {
+        finish: ["finish", "end"],
+        next: ["next", "another memory"],
+        hint: ["hint", "help"],
+        story: ["read the story", "listen to the story"],
+        familiar: ["familiar", "one week"],
+        supported: ["needed a hint", "three days"],
+        reviewSoon: ["soon", "tomorrow", "one day"]
+      },
+      fr: {
+        finish: ["terminer", "finir"],
+        next: ["suivant", "autre souvenir"],
+        hint: ["indice", "aidez-moi"],
+        story: ["lire le récit", "écouter le récit"],
+        familiar: ["familier", "une semaine"],
+        supported: ["besoin d'un indice", "trois jours"],
+        reviewSoon: ["bientôt", "demain", "un jour"]
+      }
+    }[language] || {
+      finish: ["انهاء", "خلاص"],
+      next: ["التالي", "ذكره تانيه"],
+      hint: ["تلميح", "ساعدني", "معلومه"],
+      story: ["اقرا الحكايه", "اسمع الحكايه"],
+      familiar: ["كانت مالوفه", "اسبوع"],
+      supported: ["احتجنا تلميح", "ثلاثه ايام"],
+      reviewSoon: ["قريب", "بكره", "يوم"]
+    };
+    if (voiceCommandIncludes(command, commands.finish)) actions.finish();
+    else if (voiceCommandIncludes(command, commands.next)) actions.next();
+    else if (voiceCommandIncludes(command, commands.hint)) actions.hint();
+    else if (voiceCommandIncludes(command, commands.story)) actions.story();
+    else if (voiceCommandIncludes(command, commands.familiar)) actions.familiar?.();
+    else if (voiceCommandIncludes(command, commands.supported)) actions.supported?.();
+    else if (voiceCommandIncludes(command, commands.reviewSoon)) actions.reviewSoon?.();
+    else status.textContent += language === "en"
+      ? " — Try: hint, read the story, next, or finish."
+      : language === "fr"
+        ? " — Dites : indice, lire le récit, suivant ou terminer."
+        : " — جرّبوا: تلميح، اقرأ الحكاية، التالي، أو إنهاء.";
+    return;
+  }
+
+  const navigationCommands = {
+    ar: {
+      recall: ["ابدا المراجعه", "سمارت ريكول"],
+      memories: ["ابدا جلسه", "جلسه الذكريات"],
+      tree: ["شجره العيله"],
+      family: ["افتح العيله", "افراد العيله"],
+      stories: ["الحكايات", "افتح الحكايه", "الحكايه"],
+      games: ["الانشطه", "الالعاب"],
+      settings: ["الاعدادات", "الخصوصيه"],
+      home: ["الصفحه الرئيسيه", "الرئيسيه"]
+    },
+    en: {
+      recall: ["start recall", "smart recall"],
+      memories: ["start a session", "memory session"],
+      tree: ["family tree"],
+      family: ["open family", "family members"],
+      stories: ["stories", "open stories"],
+      games: ["activities", "games"],
+      settings: ["settings", "privacy"],
+      home: ["home", "main page"]
+    },
+    fr: {
+      recall: ["commencer le rappel", "smart recall"],
+      memories: ["commencer une séance", "séance de souvenirs"],
+      tree: ["arbre généalogique"],
+      family: ["ouvrir la famille", "membres de la famille"],
+      stories: ["récits", "ouvrir les récits"],
+      games: ["activités", "jeux"],
+      settings: ["réglages", "confidentialité"],
+      home: ["accueil", "page d'accueil"]
+    }
+  }[language] || {};
+  const navigation = (name) =>
+    voiceCommandIncludes(command, navigationCommands[name] || []);
+
+  if (navigation("recall")) {
+    showPage("games");
+    startSmartRecall();
+  } else if (navigation("memories")) {
+    showPage("games");
+    startMemoryJourney();
+  } else if (navigation("tree")) {
+    showPage("family");
+    showFamilyView("tree");
+  } else if (navigation("family")) {
+    showPage("family");
+  } else if (navigation("stories")) {
+    showPage("stories");
+  } else if (navigation("games")) {
+    showPage("games");
+  } else if (navigation("settings")) {
+    showPage("settings");
+  } else if (navigation("home")) {
+    showPage("home");
+  } else {
+    status.textContent += language === "en"
+      ? " — Try: home, family, stories, activities, start recall, or start a memory session."
+      : language === "fr"
+        ? " — Dites : accueil, famille, récits, activités, commencer le rappel ou commencer une séance."
+        : " — جرّبوا: الرئيسية، العيلة، الحكايات، الأنشطة، ابدأ المراجعة، أو ابدأ جلسة الذكريات.";
+  }
+}
+
+const voiceCommandButton = $("#voiceCommandButton");
+const voiceCommandStatus = $("#voiceCommandStatus");
+voiceCommandButton?.addEventListener("click", () => {
+  startArabicSpeechInput(handleVoiceCommand, voiceCommandStatus, voiceCommandButton);
+});
+
+const storyDictateButton = $("#storyDictateButton");
+const storyDictateStatus = $("#storyDictateStatus");
+storyDictateButton?.addEventListener("click", () => {
+  startArabicSpeechInput((transcript) => {
+    const textArea = $("#storyText");
+    textArea.value = `${textArea.value.trim()}${textArea.value.trim() ? " " : ""}${transcript}`;
+    storyDictateStatus.textContent = "أُضيف الكلام إلى نص الحكاية. راجعوه قبل الحفظ.";
+  }, storyDictateStatus, storyDictateButton);
+});
 
 function addQuestionAudio(panel, text) {
   const controls = document.createElement("div");
@@ -1441,7 +2416,7 @@ function addQuestionAudio(panel, text) {
   button.className = "secondary";
   button.textContent = "🔊 اسمع السؤال";
   button.addEventListener("click", () => {
-    if (!speakArabic(text)) {
+    if (!speakArabic(text, { instruction: true })) {
       alert("تشغيل الصوت غير مدعوم في هذا المتصفح.");
     }
   });
@@ -1449,11 +2424,17 @@ function addQuestionAudio(panel, text) {
   panel.append(controls);
 
   if (state.game?.autoReadQuestions) {
-    speakArabic(text);
+    speakArabic(text, { instruction: true });
   }
 }
 
 function beginGame(gameType) {
+  if (gameType === "smart-recall") {
+    startSmartRecall();
+    $("#gameArea")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    return;
+  }
+
   if (gameType === "memories") {
     startMemoryJourney();
     $("#gameArea")?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -1573,7 +2554,7 @@ function gameShell(title, description = "") {
     panel.append(paragraph);
   }
 
-  panel.dir = "rtl";
+  panel.dir = document.documentElement.dir;
   area.append(panel);
   return panel;
 }
@@ -1602,6 +2583,274 @@ function recordAnswer(correct, responseTime) {
   if (correct) game.correct += 1;
   game.responseTimes.push(responseTime);
   game.questions.push({ correct, responseTime });
+}
+
+/* Smart Recall: gentle retrieval cues with caregiver-selected review spacing */
+
+function startSmartRecall(storyId = "") {
+  const memories = state.stories.filter((story) =>
+    state.people.some((person) => person.id === story.personId)
+  );
+  if (!memories.length) {
+    alert("أضيفوا صورة وحكاية واحدة على الأقل قبل بدء Smart Recall.");
+    showPage("stories");
+    return;
+  }
+
+  const selected = memories.find((story) => story.id === storyId);
+  const now = Date.now();
+  const due = memories.filter((story) =>
+    !story.recall?.nextReviewAt ||
+    new Date(story.recall.nextReviewAt).getTime() <= now
+  );
+  const queue = selected
+    ? [selected]
+    : (due.length ? due : memories);
+  queue.sort((first, second) =>
+    String(first.recall?.nextReviewAt || first.createdAt)
+      .localeCompare(String(second.recall?.nextReviewAt || second.createdAt))
+  );
+  state.game = null;
+  state.currentGame = null;
+  state.memoryJourney = null;
+  state.activeMemoryActions = null;
+  state.smartRecall = {
+    stories: queue,
+    index: 0,
+    cueLevel: 0,
+    isEarlyReview: !selected && due.length === 0
+  };
+  $("#gameArea")?.classList.remove("hidden");
+  showSmartRecallMoment();
+}
+
+async function showSmartRecallMoment() {
+  const recall = state.smartRecall;
+  if (!recall) return;
+  if (recall.index >= recall.stories.length) {
+    finishSmartRecall();
+    return;
+  }
+
+  const story = recall.stories[recall.index];
+  const person = state.people.find((item) => item.id === story.personId);
+  if (!person) {
+    recall.index += 1;
+    await showSmartRecallMoment();
+    return;
+  }
+  recall.cueLevel = 0;
+
+  const panel = gameShell(
+    "Smart Recall · مراجعة هادئة",
+    recall.isEarlyReview
+      ? "مفيش ذكرى مستحقة للمراجعة اليوم. يمكنكم مراجعة واحدة مبكرًا أو العودة لاحقًا."
+      : "ابدأوا بالصورة وخدوا وقتكم. مفيش إجابة غلط؛ المرافق يختار التلميح المناسب."
+  );
+  const progress = document.createElement("p");
+  progress.className = "help";
+  progress.textContent = `ذكرى ${recall.index + 1} من ${recall.stories.length}`;
+  panel.append(progress);
+
+  const image = document.createElement("img");
+  image.className = "game-photo memory-photo";
+  image.alt = "صورة عائلية للتذكّر";
+  try {
+    const url = await photoUrl(person.id);
+    if (url) {
+      image.src = url;
+      image.dataset.objectUrl = url;
+      panel.append(image);
+    }
+  } catch (error) {
+    console.error(`Could not load Smart Recall photo for ${person.name}:`, error);
+  }
+
+  const prompt = document.createElement("p");
+  prompt.className = "memory-invitation";
+  prompt.textContent = "هل الصورة دي مألوفة؟ استنوا براحتكم، أو افتحوا تلميحًا.";
+  panel.append(prompt);
+
+  const cue = document.createElement("p");
+  cue.className = "memory-cue hidden";
+  cue.setAttribute("aria-live", "polite");
+  panel.append(cue);
+
+  const title = document.createElement("h3");
+  title.className = "hidden";
+  title.textContent = story.title;
+  panel.append(title);
+
+  const storyText = document.createElement("p");
+  storyText.className = "story-content hidden";
+  storyText.textContent = story.text;
+  panel.append(storyText);
+
+  let audioPlayer = null;
+  if (story.hasAudio || person.hasAudio) {
+    try {
+      const recording = await getMemoryAudio(story, person);
+      if (recording) {
+        audioPlayer = document.createElement("audio");
+        audioPlayer.controls = true;
+        audioPlayer.preload = "none";
+        audioPlayer.classList.add("hidden");
+        audioPlayer.setAttribute("aria-label", `التسجيل الصوتي للحكاية ${story.title}`);
+        const url = URL.createObjectURL(recording);
+        audioPlayer.src = url;
+        audioPlayer.dataset.objectUrl = url;
+        panel.append(audioPlayer);
+      }
+    } catch (error) {
+      console.error(`Could not load Smart Recall audio ${story.id}:`, error);
+    }
+  }
+
+  const controls = document.createElement("div");
+  controls.className = "actions memory-actions";
+  const hintButton = document.createElement("button");
+  hintButton.type = "button";
+  hintButton.className = "secondary";
+  hintButton.textContent = "أظهر تلميحًا";
+  hintButton.addEventListener("click", () => {
+    recall.cueLevel = Math.min(3, recall.cueLevel + 1);
+    cue.classList.remove("hidden");
+    if (recall.cueLevel === 1) {
+      cue.textContent = `${person.name} · ${person.relation}`;
+    } else {
+      title.classList.remove("hidden");
+      if (recall.cueLevel === 2) {
+        cue.textContent = "دي حكاية مرتبطة بـ";
+        if (audioPlayer) audioPlayer.classList.remove("hidden");
+      } else {
+        cue.textContent = "نقدر نقرأ الحكاية معًا.";
+        storyText.classList.remove("hidden");
+      }
+    }
+    if (recall.cueLevel >= 3) hintButton.disabled = true;
+  });
+
+  const nextButton = document.createElement("button");
+  nextButton.type = "button";
+  nextButton.className = "secondary";
+  nextButton.textContent = "ذكرى تانية";
+  nextButton.addEventListener("click", () => {
+    recall.index += 1;
+    showSmartRecallMoment();
+  });
+
+  const schedule = document.createElement("fieldset");
+  schedule.className = "recall-schedule field full";
+  const legend = document.createElement("legend");
+  legend.textContent = "اختاروا موعد الرجوع للذكرى، حسب اللي كان مريحًا";
+  schedule.append(legend);
+  const supportOptions = [
+    { key: "familiar", label: "كانت مألوفة" },
+    { key: "hint", label: "احتجنا تلميحًا" },
+    { key: "story", label: "قرأنا أو سمعنا الحكاية" }
+  ];
+  supportOptions.forEach((option) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "secondary";
+    const interval = getSmartRecallInterval(story, option.key);
+    button.textContent =
+      `${translatedPhrase(option.label)} · ${formatRecallInterval(interval)}`;
+    button.addEventListener("click", () => {
+      if (!saveSmartRecallSchedule(story.id, option.key)) return;
+      recall.index += 1;
+      showSmartRecallMoment();
+    });
+    schedule.append(button);
+  });
+
+  const note = document.createElement("small");
+  note.className = "help full";
+  note.textContent =
+    "المواعيد للتنظيم فقط حسب مقدار المساعدة، ومش درجات أو قياسًا طبيًا. اتركوا الذكرى بلا موعد لو تحبوا.";
+  const finish = document.createElement("button");
+  finish.type = "button";
+  finish.className = "primary";
+  finish.textContent = "إنهاء المراجعة";
+  finish.addEventListener("click", finishSmartRecall);
+  controls.append(hintButton, nextButton, finish);
+  panel.append(controls, schedule, note);
+
+  state.activeMemoryActions = {
+    hint: () => hintButton.click(),
+    story: () => {
+      recall.cueLevel = 3;
+      cue.classList.remove("hidden");
+      cue.textContent = "نقدر نقرأ الحكاية معًا.";
+      title.classList.remove("hidden");
+      storyText.classList.remove("hidden");
+      if (audioPlayer) audioPlayer.classList.remove("hidden");
+      else speakArabic(`${story.title}. ${story.text}`);
+      hintButton.disabled = true;
+    },
+    next: () => nextButton.click(),
+    finish: finishSmartRecall,
+    familiar: () => schedule.querySelectorAll("button")[0].click(),
+    supported: () => schedule.querySelectorAll("button")[1].click(),
+    reviewSoon: () => schedule.querySelectorAll("button")[2].click()
+  };
+}
+
+function saveSmartRecallSchedule(storyId, support) {
+  const story = state.stories.find((item) => item.id === storyId);
+  if (!story) return false;
+  const intervalDays = getSmartRecallInterval(story, support);
+  const nextReviewAt = new Date(Date.now() + intervalDays * 86400000).toISOString();
+  const previousStories = state.stories;
+  state.stories = state.stories.map((story) => {
+    if (story.id !== storyId) return story;
+    const reviewCount = (story.recall?.reviewCount || 0) + 1;
+    return {
+      ...story,
+      recall: { intervalDays, nextReviewAt, lastSupport: support, reviewCount }
+    };
+  });
+  try {
+    saveStories();
+    return true;
+  } catch (error) {
+    state.stories = previousStories;
+    console.error("Could not save Smart Recall schedule:", error);
+    alert("تعذر حفظ موعد المراجعة. لم يتغير جدول الذكريات؛ يمكنكم المحاولة مرة أخرى.");
+    return false;
+  }
+}
+
+function getSmartRecallInterval(story, support) {
+  const previous = Number(story.recall?.intervalDays) || 0;
+  if (support === "familiar") {
+    return previous ? Math.min(30, Math.max(7, previous * 2)) : 7;
+  }
+  if (support === "hint") {
+    return previous ? Math.max(1, Math.ceil(previous / 2)) : 3;
+  }
+  return 1;
+}
+
+function formatRecallInterval(days) {
+  const language = getAccessibilitySettings().language;
+  if (language === "en") return `in ${days} ${days === 1 ? "day" : "days"}`;
+  if (language === "fr") return `dans ${days} ${days === 1 ? "jour" : "jours"}`;
+  return `بعد ${days === 1 ? "يوم" : `${days} أيام`}`;
+}
+
+function finishSmartRecall() {
+  state.smartRecall = null;
+  state.activeMemoryActions = null;
+  const panel = gameShell(
+    "انتهت المراجعة ❤️",
+    "شكرًا على مشاركة الذكريات. يمكنكم الرجوع لها في أي وقت، من غير درجات أو تقييم."
+  );
+  const backButton = document.createElement("button");
+  backButton.className = "primary";
+  backButton.textContent = "العودة للأنشطة";
+  backButton.addEventListener("click", () => showPage("games"));
+  panel.append(backButton);
 }
 
 /* Game: مين بيتكلم؟ */
@@ -1924,14 +3173,16 @@ function personClue(person) {
 
 /* Gentle, unscored reminiscence activity */
 
-function startMemoryJourney() {
-  const stories = state.stories
+function startMemoryJourney(reminderStoryId = "") {
+  const allStories = state.stories
     .filter((story) => state.people.some((person) => person.id === story.personId))
     .sort((first, second) =>
       String(first.date || first.createdAt).localeCompare(
         String(second.date || second.createdAt)
       )
     );
+  const reminderStory = allStories.find((story) => story.id === reminderStoryId);
+  const stories = reminderStory ? [reminderStory] : allStories;
 
   if (!stories.length) {
     alert("أضيفوا حكاية واحدة على الأقل من قسم «حكايات العيلة» لبدء جلسة الذكريات.");
@@ -1942,6 +3193,8 @@ function startMemoryJourney() {
   state.memoryJourney = { stories, index: 0 };
   state.game = null;
   state.currentGame = null;
+  state.smartRecall = null;
+  state.activeMemoryActions = null;
   $("#gameArea")?.classList.remove("hidden");
   showMemoryMoment();
 }
@@ -2008,9 +3261,9 @@ async function showMemoryMoment() {
   storyText.textContent = story.text;
   panel.append(storyText);
 
-  if (story.hasAudio) {
+  if (story.hasAudio || person.hasAudio) {
     try {
-      const recording = await getStoryAudio(story.id);
+      const recording = await getMemoryAudio(story, person);
       if (recording) {
         const player = document.createElement("audio");
         player.controls = true;
@@ -2043,7 +3296,7 @@ async function showMemoryMoment() {
   showStoryButton.textContent = "اقرؤوا الحكاية معًا";
   showStoryButton.addEventListener("click", () => {
     storyText.classList.remove("hidden");
-    if (!story.hasAudio) speakArabic(`${story.title}. ${story.text}`);
+    if (!story.hasAudio && !person.hasAudio) speakArabic(`${story.title}. ${story.text}`);
     showStoryButton.disabled = true;
   });
 
@@ -2063,10 +3316,17 @@ async function showMemoryMoment() {
   endButton.addEventListener("click", finishMemoryJourney);
   actions.append(cueButton, showStoryButton, nextButton, endButton);
   panel.append(actions);
+  state.activeMemoryActions = {
+    hint: () => cueButton.click(),
+    story: () => showStoryButton.click(),
+    next: () => nextButton.click(),
+    finish: finishMemoryJourney
+  };
 }
 
 function finishMemoryJourney() {
   state.memoryJourney = null;
+  state.activeMemoryActions = null;
   if ("speechSynthesis" in window) window.speechSynthesis.cancel();
   const panel = gameShell(
     "شكرًا على الوقت الجميل ❤️",
@@ -2350,7 +3610,11 @@ function renderResearch() {
         const subtitle = document.createElement("div");
         subtitle.className = "muted";
         subtitle.textContent =
-          `${date.toLocaleString("ar-EG")} • ${session.timeOfDay}`;
+          `${date.toLocaleString(getLocaleTag())} • ${translatedPhrase({
+            morning: "الصباح",
+            afternoon: "بعد الظهر",
+            evening: "المساء"
+          }[session.timeOfDay] || session.timeOfDay)}`;
 
         details.append(title, subtitle);
 
@@ -2369,12 +3633,13 @@ function renderResearch() {
 }
 
 function gameName(type) {
-  return ({
+  const name = ({
     who: "مين ده؟",
     clue: "فاكر الحكاية؟",
     voice: "مين بيتكلم؟",
     order: "ترتيب العيلة"
   })[type] || type;
+  return translatedPhrase(name);
 }
 
 function drawChart(sessions) {
@@ -2396,13 +3661,22 @@ function drawChart(sessions) {
   const data = sessions
     .filter((session) => Number.isFinite(session.accuracy))
     .slice(-10);
+  const styles = getComputedStyle(document.body);
+  const mutedColor = styles.getPropertyValue("--muted").trim();
+  const borderColor = styles.getPropertyValue("--border").trim();
+  const primaryColor = styles.getPropertyValue("--primary").trim();
+  const textColor = styles.getPropertyValue("--text").trim();
 
-  context.fillStyle = "#77736c";
+  context.fillStyle = mutedColor;
   context.font = "12px Tahoma, Arial";
   context.textAlign = "center";
 
   if (!data.length) {
-    context.fillText("هتظهر النتائج هنا بعد حفظ أول جلسة", width / 2, height / 2);
+    context.fillText(
+      translatedPhrase("هتظهر النتائج هنا بعد حفظ أول جلسة"),
+      width / 2,
+      height / 2
+    );
     return;
   }
 
@@ -2413,14 +3687,14 @@ function drawChart(sessions) {
   [0, 25, 50, 75, 100].forEach((value) => {
     const y = padding.top + chartHeight - (value / 100) * chartHeight;
 
-    context.strokeStyle = "#e7dfd5";
+    context.strokeStyle = borderColor;
     context.beginPath();
     context.moveTo(padding.left, y);
     context.lineTo(width - padding.right, y);
     context.stroke();
 
-    context.fillStyle = "#77736c";
-    context.textAlign = "right";
+    context.fillStyle = mutedColor;
+    context.textAlign = document.documentElement.dir === "rtl" ? "right" : "left";
     context.fillText(`${value}%`, padding.left - 6, y + 4);
   });
 
@@ -2432,10 +3706,10 @@ function drawChart(sessions) {
     const x = padding.left + slot * index + (slot - barWidth) / 2;
     const y = padding.top + chartHeight - barHeight;
 
-    context.fillStyle = "#8a6554";
+    context.fillStyle = primaryColor;
     context.fillRect(x, y, barWidth, barHeight);
 
-    context.fillStyle = "#51463e";
+    context.fillStyle = textColor;
     context.textAlign = "center";
     context.fillText(
       `${session.accuracy}%`,
@@ -2443,7 +3717,7 @@ function drawChart(sessions) {
       Math.max(y - 6, 12)
     );
 
-    context.fillStyle = "#77736c";
+    context.fillStyle = mutedColor;
     context.fillText(
       String(index + 1),
       x + barWidth / 2,
@@ -2847,6 +4121,7 @@ async function restoreBackup(file) {
     const { audioData, ...metadata } = story;
     restoredStories.push({ ...metadata, hasAudio: Boolean(audioData) });
   }
+  validateFamilyTree(restoredPeople);
 
   const previousPeople = state.people;
   const previousSessions = state.sessions;
@@ -2957,17 +4232,53 @@ $("#backupBtn")?.addEventListener("click", () => {
 });
 
 function applyAccessibilitySettings() {
-  const settings = readStorage(ACCESSIBILITY_KEY, {}) || {};
-  const fontSize = Number(settings.fontSize);
-  const size = Number.isFinite(fontSize) ? Math.min(22, Math.max(14, fontSize)) : 16;
-  document.documentElement.style.setProperty("--base-font-size", `${size}px`);
+  const settings = getAccessibilitySettings();
+  const fontSize = Math.min(22, Math.max(14, Number(settings.fontSize) || 16));
+  const lineSpacing = Math.min(2.4, Math.max(1.4, Number(settings.lineSpacing) || 1.7));
+  const letterSpacing = Math.min(0.1, Math.max(0, Number(settings.letterSpacing) || 0));
+  const speechRate = Math.min(1.4, Math.max(0.6, Number(settings.speechRate) || 0.9));
+  const repeats = [1, 2, 3].includes(Number(settings.instructionRepeats))
+    ? Number(settings.instructionRepeats)
+    : 1;
+  document.documentElement.style.setProperty("--base-font-size", `${fontSize}px`);
+  document.documentElement.style.setProperty("--line-height", String(lineSpacing));
+  document.documentElement.style.setProperty("--letter-spacing", `${letterSpacing}em`);
   document.body.classList.toggle("high-contrast", settings.highContrast === true);
-  const contrastInput = $("#highContrast");
-  if (contrastInput) contrastInput.checked = settings.highContrast === true;
+  document.body.classList.toggle("dark", settings.theme === "dark");
+  document.body.classList.toggle("comfort", settings.comfortMode === true);
+  document.body.classList.toggle("reduce-motion", settings.reduceMotion === true);
+
+  const controls = {
+    uiLanguage: settings.language,
+    themeMode: settings.theme === "dark" ? "dark" : "light",
+    instructionRepeats: String(repeats),
+    lineSpacing: String(lineSpacing.toFixed(1)),
+    letterSpacing: String(letterSpacing.toFixed(2)),
+    speechRate: String(speechRate.toFixed(1))
+  };
+  Object.entries(controls).forEach(([id, value]) => {
+    const control = $(`#${id}`);
+    if (control) control.value = value;
+  });
+  const checkboxes = {
+    highContrast: settings.highContrast === true,
+    comfortMode: settings.comfortMode === true,
+    reduceMotion: settings.reduceMotion === true
+  };
+  Object.entries(checkboxes).forEach(([id, checked]) => {
+    const control = $(`#${id}`);
+    if (control) control.checked = checked;
+  });
+
+  $("#lineSpacingValue").textContent = lineSpacing.toFixed(1);
+  $("#letterSpacingValue").textContent = `${letterSpacing.toFixed(2)}em`;
+  $("#speechRateValue").textContent = `${speechRate.toFixed(1)}×`;
+  applyLanguageSettings(settings.language);
+  if (!$("#research")?.classList.contains("hidden")) drawChart(state.sessions);
 }
 
 function updateAccessibilitySettings(change) {
-  const current = readStorage(ACCESSIBILITY_KEY, {}) || {};
+  const current = getAccessibilitySettings();
   const next = { ...current, ...change };
   try {
     localStorage.setItem(ACCESSIBILITY_KEY, JSON.stringify(next));
@@ -2979,13 +4290,13 @@ function updateAccessibilitySettings(change) {
 }
 
 $("#fontDecrease")?.addEventListener("click", () => {
-  const settings = readStorage(ACCESSIBILITY_KEY, {}) || {};
-  const current = Number.isFinite(Number(settings.fontSize)) ? Number(settings.fontSize) : 16;
+  const settings = getAccessibilitySettings();
+  const current = Number(settings.fontSize);
   updateAccessibilitySettings({ fontSize: Math.max(14, current - 1) });
 });
 $("#fontIncrease")?.addEventListener("click", () => {
-  const settings = readStorage(ACCESSIBILITY_KEY, {}) || {};
-  const current = Number.isFinite(Number(settings.fontSize)) ? Number(settings.fontSize) : 16;
+  const settings = getAccessibilitySettings();
+  const current = Number(settings.fontSize);
   updateAccessibilitySettings({ fontSize: Math.min(22, current + 1) });
 });
 $("#fontReset")?.addEventListener("click", () => {
@@ -2993,6 +4304,30 @@ $("#fontReset")?.addEventListener("click", () => {
 });
 $("#highContrast")?.addEventListener("change", (event) => {
   updateAccessibilitySettings({ highContrast: event.target.checked });
+});
+$("#uiLanguage")?.addEventListener("change", (event) => {
+  updateAccessibilitySettings({ language: event.target.value });
+});
+$("#themeMode")?.addEventListener("change", (event) => {
+  updateAccessibilitySettings({ theme: event.target.value });
+});
+$("#comfortMode")?.addEventListener("change", (event) => {
+  updateAccessibilitySettings({ comfortMode: event.target.checked });
+});
+$("#reduceMotion")?.addEventListener("change", (event) => {
+  updateAccessibilitySettings({ reduceMotion: event.target.checked });
+});
+$("#lineSpacing")?.addEventListener("input", (event) => {
+  updateAccessibilitySettings({ lineSpacing: Number(event.target.value) });
+});
+$("#letterSpacing")?.addEventListener("input", (event) => {
+  updateAccessibilitySettings({ letterSpacing: Number(event.target.value) });
+});
+$("#speechRate")?.addEventListener("input", (event) => {
+  updateAccessibilitySettings({ speechRate: Number(event.target.value) });
+});
+$("#instructionRepeats")?.addEventListener("change", (event) => {
+  updateAccessibilitySettings({ instructionRepeats: Number(event.target.value) });
 });
 
 $("#clearDataBtn")?.addEventListener("click", async () => {
@@ -3054,6 +4389,22 @@ async function init() {
   await renderStories();
   await renderFamily();
   await loadReminderSettings();
+  const reminderOpened = new URLSearchParams(location.search).get("fromReminder") === "1";
+  if (reminderOpened) {
+    history.replaceState(null, "", `${location.pathname}${location.hash}`);
+    const reminderStory = state.stories.find(
+      (story) => story.id === state.reminderMemoryId
+    );
+    if (reminderStory) {
+      showPage("games");
+      startMemoryJourney(reminderStory.id);
+    } else {
+      showPage("home");
+      setTimeout(() => {
+        $("#weeklyChallengeButton")?.focus();
+      }, 0);
+    }
+  }
 }
 
 init();

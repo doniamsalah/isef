@@ -26,6 +26,14 @@
     <span class="status" role="status" aria-live="polite">
       بيانات محلية على الجهاز
     </span>
+    <div class="voice-assistant">
+      <button id="voiceCommandButton" class="secondary" type="button" aria-describedby="voiceCommandStatus">
+        🎙️ تكلّم مع ذاكرتي
+      </button>
+      <span id="voiceCommandStatus" class="help" role="status" aria-live="polite">
+        اضغط الزر وقل أمرًا. الميكروفون لا يعمل قبل الضغط؛ ذاكرتي لا تحفظ الصوت، وقد يعالجه المتصفح.
+      </span>
+    </div>
   </header>
 
   <main class="container">
@@ -136,7 +144,17 @@
         </div>
       </div>
 
+      <div class="family-view-switch" role="group" aria-label="طريقة عرض العيلة">
+        <button id="familyCardsView" class="secondary active" type="button" aria-pressed="true">
+          عرض الأفراد
+        </button>
+        <button id="familyTreeView" class="secondary" type="button" aria-pressed="false">
+          شجرة العيلة
+        </button>
+      </div>
+
       <div id="familyList" class="family-grid"></div>
+      <div id="familyTree" class="family-tree hidden" aria-label="شجرة العيلة"></div>
 
       <p id="familyEmpty" class="empty">
         لسه مفيش أفراد مضافين. ابدأ بإضافة أول شخص.
@@ -171,6 +189,14 @@
             <label for="storyText">احكوا لنا عنها</label>
             <textarea id="storyText" rows="4" maxlength="1200" required
               placeholder="اكتبوا الذكرى كما تحبوا أن تفتكروها..."></textarea>
+            <div class="actions">
+              <button id="storyDictateButton" class="secondary" type="button">
+                🎙️ إملاء الحكاية بالصوت
+              </button>
+            </div>
+            <small id="storyDictateStatus" class="help" role="status" aria-live="polite">
+              التسجيل الصوتي يبدأ فقط عند الضغط على الزر.
+            </small>
           </div>
           <div class="field full">
             <label for="storyAudio">تسجيل الحكاية (اختياري)</label>
@@ -204,12 +230,23 @@
       </p>
 
       <div class="game-grid">
+        <button class="game-card" data-game="smart-recall">
+          <span class="game-icon" aria-hidden="true">🌱</span>
+          <strong>Smart Recall — استدعاء متدرّج</strong>
+          <small>مراجعة صور وحكايات بتلميحات اختيارية ومواعيد مرنة، بلا درجات أو إجابات خطأ</small>
+        </button>
+
         <button class="game-card" data-game="memories">
           <span class="game-icon" aria-hidden="true">🌿</span>
           <strong>جلسة ذكريات هادئة</strong>
           <small>استرجعوا الصور والحكايات معًا، خطوة بخطوة ومن غير اختبار</small>
         </button>
       </div>
+
+      <p class="help">
+        Smart Recall ينظم مراجعة الذكريات بتلميحات ومواعيد متباعدة يختارها المرافق.
+        هو أداة تذكّر مساعدة، وليس علاجًا مثبتًا للخرف أو بديلًا عن الطبيب.
+      </p>
 
       <p class="help">
         يُفضّل مشاركة شخص مألوف للمريض. استمعوا له من غير تصحيح أو ضغط؛
@@ -234,7 +271,7 @@
         </div>
         <label class="voice-toggle" for="autoReadQuestions">
           <input id="autoReadQuestions" type="checkbox">
-          <span>اقرأ الأسئلة بصوت عربي تلقائيًا</span>
+          <span>اقرأ الأسئلة بصوت تلقائيًا</span>
         </label>
         <small id="voiceSupport" class="help" role="status">
           تقدر كمان تضغط «اسمع السؤال» وقت اللعب.
@@ -260,10 +297,10 @@
           <small>اسمع التسجيل واختار الشخص المناسب</small>
         </button>
 
-        <button class="game-card" data-game="order">
+        <button class="game-card" data-go-family-tree>
           <span class="game-icon" aria-hidden="true">🌳</span>
-          <strong>ترتيب العيلة</strong>
-          <small>رتب أفراد العيلة من الأكبر للأصغر</small>
+          <strong>شجرة العيلة</strong>
+          <small>اعرض أفراد العيلة وصلات القرابة التي أضفتموها</small>
         </button>
       </div>
       </details>
@@ -410,8 +447,18 @@
               <option value="general">رسالة ترحيبية</option>
               <option value="photos">صور العيلة</option>
               <option value="stories">حكاية عائلية</option>
+              <option value="memory">ذكرى بصورة أو صوت</option>
               <option value="games">لعبة تذكّر</option>
             </select>
+          </div>
+          <div class="field full hidden" id="reminderMemoryField">
+            <label for="reminderMemory">الذكرى المرتبطة بالتذكير</label>
+            <select id="reminderMemory"></select>
+            <small class="help">
+              إشعار المتصفح لا يشغّل الصوت تلقائيًا. عند فتحه، تظهر الذكرى المختارة
+              على هذا الجهاز ويمكن تشغيل الصوت يدويًا.
+            </small>
+            <div id="reminderMemoryPreview" class="reminder-memory-preview" aria-live="polite"></div>
           </div>
 
           <fieldset class="field full reminder-days">
@@ -458,17 +505,81 @@
         </p>
       </section>
 
-      <section class="panel">
-        <h3>سهولة القراءة</h3>
-        <p>عدّل حجم النص أو فعّل التباين العالي لراحة أكبر.</p>
-        <div class="actions accessibility-controls">
-          <button id="fontDecrease" class="secondary" type="button" aria-label="تصغير حجم النص">A−</button>
-          <button id="fontReset" class="secondary" type="button">حجم النص الافتراضي</button>
-          <button id="fontIncrease" class="secondary" type="button" aria-label="تكبير حجم النص">A+</button>
-          <label class="reminder-toggle">
+      <section class="panel" aria-labelledby="languageSettingsTitle">
+        <h3 id="languageSettingsTitle">لغة الموقع</h3>
+        <div class="field">
+          <label for="uiLanguage">اختاروا لغة الواجهة</label>
+          <select id="uiLanguage">
+            <option value="ar">العربية</option>
+            <option value="en">English</option>
+            <option value="fr">Français</option>
+          </select>
+        </div>
+      </section>
+
+      <section class="panel" aria-labelledby="readingSettingsTitle">
+        <h3 id="readingSettingsTitle">راحة القراءة والمظهر</h3>
+        <p>اختاروا المظهر والمسافات وحجم النص المريح. تُحفظ التفضيلات على هذا الجهاز.</p>
+        <div class="form-grid accessibility-settings">
+          <div class="field">
+            <label for="themeMode">المظهر</label>
+            <select id="themeMode">
+              <option value="light">فاتح</option>
+              <option value="dark">داكن</option>
+            </select>
+          </div>
+          <label class="reminder-toggle field" for="highContrast">
             <span>تباين عالٍ</span>
             <input id="highContrast" type="checkbox">
           </label>
+          <label class="reminder-toggle field" for="comfortMode">
+            <span>وضع الراحة بألوان دافئة</span>
+            <input id="comfortMode" type="checkbox">
+          </label>
+          <label class="reminder-toggle field" for="reduceMotion">
+            <span>تقليل الحركة والانتقالات</span>
+            <input id="reduceMotion" type="checkbox">
+          </label>
+          <div class="field full">
+            <label>حجم النص</label>
+            <div class="actions accessibility-controls">
+              <button id="fontDecrease" class="secondary" type="button" aria-label="تصغير حجم النص">A−</button>
+              <button id="fontReset" class="secondary" type="button">حجم النص الافتراضي</button>
+              <button id="fontIncrease" class="secondary" type="button" aria-label="تكبير حجم النص">A+</button>
+            </div>
+          </div>
+          <div class="field">
+            <label for="lineSpacing">المسافة بين السطور</label>
+            <input id="lineSpacing" type="range" min="1.4" max="2.4" step="0.1">
+            <output id="lineSpacingValue" for="lineSpacing"></output>
+          </div>
+          <div class="field">
+            <label for="letterSpacing">المسافة بين الحروف</label>
+            <input id="letterSpacing" type="range" min="0" max="0.1" step="0.01">
+            <output id="letterSpacingValue" for="letterSpacing"></output>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel" aria-labelledby="voiceSettingsTitle">
+        <h3 id="voiceSettingsTitle">إعدادات الصوت والتعليمات</h3>
+        <div class="form-grid accessibility-settings">
+          <div class="field">
+            <label for="speechRate">سرعة القراءة الصوتية</label>
+            <input id="speechRate" type="range" min="0.6" max="1.4" step="0.1">
+            <output id="speechRateValue" for="speechRate"></output>
+          </div>
+          <div class="field">
+            <label for="instructionRepeats">تكرار التعليمات</label>
+            <select id="instructionRepeats">
+              <option value="1">مرة واحدة</option>
+              <option value="2">مرتين</option>
+              <option value="3">ثلاث مرات</option>
+            </select>
+          </div>
+          <p class="help full">
+            سرعة وتكرار الصوت يطبّقان على التعليمات المقروءة؛ يمكن الاستماع إلى الحكايات والتسجيلات يدويًا.
+          </p>
         </div>
       </section>
 
@@ -608,6 +719,11 @@
             maxlength="40"
             placeholder="مثلاً: جدتي"
           >
+        </div>
+        <div class="field full">
+          <label for="personParent">الوالد أو الوالدة في شجرة العيلة (اختياري)</label>
+          <select id="personParent"></select>
+          <small class="help">اختاروا فردًا أكبر مرتبطًا به ليظهر تحته في الشجرة، أو اتركوه بلا اختيار.</small>
         </div>
 
         <div class="field">
